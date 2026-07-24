@@ -1,29 +1,16 @@
 /**
- * CSTR Grading Engine
- * Handles mathematically accurate weighted percentage calculations.
+ * Universal CSTR Grading Engine
+ * Supports both CSTRGrading and GradingEngine naming conventions to prevent destructuring crashes.
  */
-const GradingEngine = {
-  // Default percentage weights (e.g., WW 40%, PT 40%, EX 20%)
-  weights: {
-    ww: 0.40,
-    pt: 0.40,
-    ex: 0.20
-  },
+const CSTRGrading = {
+  weights: { ww: 0.40, pt: 0.40, ex: 0.20 },
 
-  /**
-   * Updates component weights
-   */
   setWeights(ww, pt, ex) {
     this.weights = { ww: ww / 100, pt: pt / 100, ex: ex / 100 };
   },
 
-  /**
-   * Calculates total, percentage score (PS), and weighted score (WS) for a category
-   * @param {Array<number>} studentScores - Array of scores achieved by student
-   * @param {Array<number>} maxScores - Array of highest possible scores
-   * @param {string} category - 'ww', 'pt', or 'ex'
-   */
-  calculateDivision(studentScores, maxScores, category) {
+  // Primary calculation function
+  calculateComponent(studentScores, maxScores, category) {
     let totalScore = 0;
     let totalMax = 0;
 
@@ -40,21 +27,26 @@ const GradingEngine = {
       return { total: 0, ps: 0, ws: 0 };
     }
 
-    const percentageScore = (totalScore / totalMax) * 100;
-    const weightedScore = percentageScore * (this.weights[category] || 0);
+    const ps = (totalScore / totalMax) * 100;
+    const ws = ps * (this.weights[category] || 0);
 
     return {
       total: Math.round(totalScore * 100) / 100,
-      ps: Math.round(percentageScore * 100) / 100,
-      ws: Math.round(weightedScore * 100) / 100
+      ps: Math.round(ps * 100) / 100,
+      ws: Math.round(ws * 100) / 100
     };
   },
 
-  /**
-   * Calculates the Final Initial Grade by summing all Weighted Scores
-   */
+  // Alias name so either function name works seamlessly
+  calculateDivision(studentScores, maxScores, category) {
+    return this.calculateComponent(studentScores, maxScores, category);
+  },
+
   calculateFinalGrade(wwWS, ptWS, exWS) {
-    const finalGrade = wwWS + ptWS + exWS;
-    return Math.round(finalGrade * 100) / 100;
+    return Math.round((wwWS + ptWS + exWS) * 100) / 100;
   }
 };
+
+// Bind all possible object names to the global window so app.js cannot fail
+window.CSTRGrading = CSTRGrading;
+window.GradingEngine = CSTRGrading;
