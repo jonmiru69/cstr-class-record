@@ -23,7 +23,9 @@
   let activePeriodIndex = 0;
   let state = createInitialState();
 
-  // Revision C: Multi-Cell Selection State
+  // Security & Sync Interlocks
+  let isDataLoaded = false;
+  let isLoading = false;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
 
   function emptyRoster(size) {
@@ -90,7 +92,6 @@
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
   function button(label, action, className = "button", extra = "") { return `<button type="button" class="${className}" data-action="${action}" ${extra}>${label}</button>`; }
 
-  // Revision A: Phrase-based "Boys" and "Girls" category detection
   function getLearnerCategory(name) {
     if (typeof name !== "string") return null;
     const clean = name.trim().toLowerCase();
@@ -99,13 +100,12 @@
     return null;
   }
 
-  // Revision A & D: Dynamic sequential numbering excluding blanks and categories
   function computeLearnerNumbering(roster) {
     let count = 0;
     const numbering = roster.map((learner) => {
       const name = (learner.name || "").trim();
-      if (!name) return ""; // Blank row
-      if (getLearnerCategory(name)) return "—"; // Category phrase detected
+      if (!name) return ""; 
+      if (getLearnerCategory(name)) return "—"; 
       count += 1;
       return count;
     });
@@ -139,7 +139,6 @@
     document.documentElement.style.setProperty("--name-col-width", `${newWidth}px`);
   }
 
-  // Revision E: Curtain raise sticky header check
   function updateHeaderScroll() {
     const header = document.querySelector(".app-header");
     if (!header) return;
@@ -343,12 +342,25 @@
     if (btn) { btn.classList.toggle("saving", type === "saving"); btn.classList.toggle("error", type === "error"); }
   }
 
+  // Security Interlock: Physically block saving unless remote sync is confirmed
   function syncSaveControl() {
     const btn = document.querySelector("#saveChanges");
     if (!btn) return;
-    btn.disabled = false;
-    if (!localStorage.getItem(GIST_ID_KEY) || !localStorage.getItem(GIST_TOKEN_KEY)) setStatus("Add your Gist ID and PAT in Settings to enable sync.");
-    else setStatus("Ready to save.");
+    
+    const hasCreds = Boolean(localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY));
+    if (!hasCreds) {
+      btn.disabled = false;
+      setStatus("Add your Gist ID and PAT in Settings to enable sync.");
+    } else if (isLoading) {
+      btn.disabled = true;
+      setStatus("Syncing with GitHub Gist... Please wait.", "saving");
+    } else if (!isDataLoaded) {
+      btn.disabled = true;
+      setStatus("⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving to prevent overwriting.", "error");
+    } else {
+      btn.disabled = false;
+      setStatus("Ready to save. ✓");
+    }
   }
 
   async function saveToGist() {
@@ -356,6 +368,14 @@
     const gistId = localStorage.getItem(GIST_ID_KEY);
     const token = localStorage.getItem(GIST_TOKEN_KEY);
     if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token in Settings first.", "error"); return; }
+    
+    // Hard Security Guardrail: Prevent execution if data was never confirmed loaded
+    if (!isDataLoaded) {
+      setStatus("⚠️ BLOCKED: Cannot save un-synchronized data! Please reload data from Settings first.", "error");
+      alert("SECURITY BLOCK:\n\nYou are attempting to save while your remote GitHub data has not been confirmed loaded into this session.\n\nTo prevent overwriting and permanently losing your saved class records, saving has been blocked. Please open Settings and click 'Load saved data' first.");
+      return;
+    }
+
     setStatus("Saving...", "saving");
     try {
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
@@ -372,19 +392,34 @@
     const gistId = localStorage.getItem(GIST_ID_KEY);
     const token = localStorage.getItem(GIST_TOKEN_KEY);
     if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token first.", "error"); return; }
-    setStatus("Loading saved data...", "saving");
+    
+    isLoading = true;
+    syncSaveControl();
+    setStatus("Loading saved data from GitHub...", "saving");
     try {
-      const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` } });
+      // cache: "no-store" prevents browsers from serving stale/empty cached payloads
+      const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { 
+        headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
+        cache: "no-store" 
+      });
       if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
       const gist = await response.json();
       const file = gist.files["cstr-class-record-data.json"] || Object.values(gist.files)[0];
       if (!file) throw new Error("No JSON file was found in this Gist.");
-      const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` } })).text() : file.content;
+      const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : file.content;
+      
       state = normalizeState(JSON.parse(content || "{}"));
       activePeriodIndex = 0;
+      isDataLoaded = true; // Mark remote source of truth as synchronized!
+      isLoading = false;
       render();
-      setStatus("Saved data loaded ✓");
-    } catch (error) { setStatus(`Error - check connection/token: ${error.message}`, "error"); }
+      setStatus("Saved data loaded successfully ✓");
+    } catch (error) { 
+      isLoading = false;
+      isDataLoaded = false; // Lock Save button on failure
+      render();
+      setStatus(`Load Error: ${error.message}. Save is locked to protect data.`, "error"); 
+    }
   }
 
   function renderSettings() {
@@ -406,7 +441,8 @@
     localStorage.setItem(GIST_ID_KEY, gistId);
     localStorage.setItem(GIST_TOKEN_KEY, token);
     closeSettings();
-    setStatus("Settings saved on this device.");
+    setStatus("Settings saved. Auto-loading data now...");
+    loadFromGist(); // Auto-trigger load as soon as new settings are saved
   }
 
   function choosePhoto() { document.querySelector("#photoInput")?.click(); }
@@ -432,7 +468,6 @@
     reader.readAsDataURL(file);
   }
 
-  // Revision C: Coordinate mapping for selection and bulk paste
   const FIELD_ORDER_LENGTH = 22;
   function fieldStartColumn(target) {
     if (target.dataset.nameRow !== undefined) return 0;
@@ -474,7 +509,6 @@
     document.querySelectorAll(".cell-selected").forEach((el) => el.classList.remove("cell-selected"));
   }
 
-  // Mouse selection event listeners
   app.addEventListener("mousedown", (event) => {
     const input = event.target.closest(".record-table tbody input");
     if (!input || event.button !== 0) { if (!event.target.closest(".record-table tbody")) clearSelection(); return; }
@@ -499,7 +533,6 @@
 
   document.addEventListener("mouseup", () => { if (selectionState.active) selectionState.active = false; });
 
-  // Keyboard multi-cell commands (Cut, Copy, Delete, Escape)
   document.addEventListener("keydown", (event) => {
     const bounds = getSelectionBounds();
     const hasMultiSelection = bounds && (bounds.minRow !== bounds.maxRow || bounds.minCol !== bounds.maxCol);
@@ -575,7 +608,16 @@
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
-      if (password === LOGIN_PASSWORD) { sessionStorage.setItem("cstr-class-record-login", "true"); render(); if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) loadFromGist(); }
+      if (password === LOGIN_PASSWORD) { 
+        sessionStorage.setItem("cstr-class-record-login", "true"); 
+        render(); 
+        if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
+          loadFromGist(); 
+        } else {
+          isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+          syncSaveControl();
+        }
+      }
       else { error.textContent = "Incorrect password. Please try again."; error.classList.add("error"); }
     }
     if (action === "logout") { sessionStorage.removeItem("cstr-class-record-login"); currentView = "home"; render(); }
@@ -688,5 +730,19 @@
   });
 
   app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
-  render();
+  
+  // INITIALIZATION ENGINE: Automatically sync on startup or page refresh!
+  function initApp() {
+    render();
+    if (sessionStorage.getItem("cstr-class-record-login") === "true") {
+      if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
+        loadFromGist(); // Auto-pull data immediately without requiring a button click
+      } else {
+        isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+        syncSaveControl();
+      }
+    }
+  }
+
+  initApp();
 })();
