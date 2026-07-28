@@ -23,6 +23,9 @@
   let activePeriodIndex = 0;
   let state = createInitialState();
 
+  // Revision C: Multi-Cell Selection State
+  let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
+
   function emptyRoster(size) {
     return Array.from({ length: size }, () => ({ name: "", ww: Array(10).fill(""), pt: Array(8).fill(""), qa: Array(3).fill("") }));
   }
@@ -87,16 +90,40 @@
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
   function button(label, action, className = "button", extra = "") { return `<button type="button" class="${className}" data-action="${action}" ${extra}>${label}</button>`; }
 
-  // Revision 3b: Detect "Boys" and "Girls" category rows
+  // Revision A: Phrase-based "Boys" and "Girls" category detection
   function getLearnerCategory(name) {
     if (typeof name !== "string") return null;
     const clean = name.trim().toLowerCase();
-    if (clean === "boys") return "boys";
-    if (clean === "girls") return "girls";
+    if (clean.includes("boys")) return "boys";
+    if (clean.includes("girls")) return "girls";
     return null;
   }
 
-  // Revision 3a: Automatically calculate longest name and adjust column width
+  // Revision A & D: Dynamic sequential numbering excluding blanks and categories
+  function computeLearnerNumbering(roster) {
+    let count = 0;
+    const numbering = roster.map((learner) => {
+      const name = (learner.name || "").trim();
+      if (!name) return ""; // Blank row
+      if (getLearnerCategory(name)) return "—"; // Category phrase detected
+      count += 1;
+      return count;
+    });
+    return { numbering, totalLearners: count };
+  }
+
+  function updateAllNumberingAndCounts() {
+    const period = currentPeriod();
+    if (!period || !period.roster) return;
+    const { numbering, totalLearners } = computeLearnerNumbering(period.roster);
+    document.querySelectorAll("tr[data-learner-row]").forEach((row, idx) => {
+      const numCell = row.querySelector(".number-cell");
+      if (numCell) numCell.textContent = numbering[idx] !== undefined ? numbering[idx] : "";
+    });
+    const countBadge = document.querySelector("#liveLearnerCount");
+    if (countBadge) countBadge.textContent = `${totalLearners} Learner${totalLearners === 1 ? "" : "s"}`;
+  }
+
   function adjustNameColumnWidth() {
     const period = currentPeriod();
     if (!period || !period.roster) return;
@@ -112,7 +139,7 @@
     document.documentElement.style.setProperty("--name-col-width", `${newWidth}px`);
   }
 
-  // Revision 1: Check scroll depth to toggle shrunk sticky header
+  // Revision E: Curtain raise sticky header check
   function updateHeaderScroll() {
     const header = document.querySelector(".app-header");
     if (!header) return;
@@ -137,6 +164,7 @@
     app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
     syncSaveControl();
     adjustNameColumnWidth();
+    updateAllNumberingAndCounts();
     updateHeaderScroll();
   }
 
@@ -195,17 +223,22 @@
     const periods = state.sections[section.id].periods;
     if (activePeriodIndex >= periods.length) activePeriodIndex = 0;
     const period = currentPeriod();
+    const { totalLearners } = computeLearnerNumbering(period.roster);
     const periodTabs = periods.map((entry, index) => `<button type="button" class="tab theme-${section.theme}" data-action="select-period" data-period="${index}" aria-selected="${activePeriodIndex === index}">${escapeHtml(entry.name)}</button>`).join("");
-    return `<div class="record-section"><div class="section-heading"><div><h2>${escapeHtml(section.subject)}</h2><div class="record-meta"><span><strong>${section.level}</strong></span><span>Weights: <strong>${section.weights.join(" / ")}</strong></span><span>Roster capacity: <strong>${section.rosterSize}</strong></span></div></div></div>
+    
+    return `<div class="record-section">
+      <div class="section-heading"><div>
+        <div class="section-title-wrap"><h2>${escapeHtml(section.subject)}</h2><span id="liveLearnerCount" class="learner-count-badge">${totalLearners} Learner${totalLearners === 1 ? "" : "s"}</span></div>
+        <div class="record-meta"><span><strong>${section.level}</strong></span><span>Weights: <strong>${section.weights.join(" / ")}</strong></span><span>Roster capacity: <strong>${section.rosterSize}</strong></span></div>
+      </div></div>
       <div class="period-tabs" aria-label="Grading period tabs">${periodTabs}</div>
       <div class="period-toolbar"><label for="periodName">Period name</label><input id="periodName" class="period-name" value="${safeValue(period.name)}" data-period-name>
       ${button("+ Add Grading Period", "add-period", "button button-yellow")}</div>
-      <p class="paste-hint"><strong>Bulk paste tip:</strong> click any Learner name cell or any score cell, then paste a block of rows/columns copied straight from Excel or Google Sheets (Ctrl+V / Cmd+V). It fills across the matching cells automatically, starting from the cell you clicked, and lines everything up with the correct columns and rows.</p>
+      <p class="paste-hint"><strong>Bulk multi-select & paste tip:</strong> click and drag across input cells vertically or horizontally to select blocks. Use <strong>Ctrl+C</strong> to copy, <strong>Ctrl+X</strong> to cut, <strong>Delete</strong> to clear, or paste (Ctrl+V) copied spreadsheet blocks straight from Excel/Sheets.</p>
       <div class="legend"><span><i class="dot dot-red"></i>Raw score above HPS - correct before finalizing</span><span><i class="dot dot-code"></i>A = Absent · E = Excused · L = Late, all excluded from the grade computation</span><span>QA slots use fixed 30% / 30% / 40% intra-weights</span></div>
       ${renderRecordTable(section, period)}</div>`;
   }
 
-  // Revision 5: Added explicit border-start-pt and border-start-qa classes to index 0 of PT and QA
   function renderRecordTable(section, period) {
     const dateHeaders = (kind, values, labels = []) => values.map((value, index) => {
       const label = labels[index] ? `<span>${labels[index]}</span>` : "";
@@ -216,7 +249,8 @@
       const borderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
       return `<td class="${borderClass}"><input type="number" min="0" step="any" inputmode="decimal" data-hps="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} ${index + 1} highest possible score"></td>`;
     }).join("");
-    const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section)).join("");
+    const { numbering } = computeLearnerNumbering(period.roster);
+    const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section, numbering[rowIndex])).join("");
     return `<div class="table-wrap"><table class="record-table compact-record"><thead>
       <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="13">Written Works (${section.weights[0]}%)</th><th class="component-header component-pt border-start-pt" scope="colgroup" colspan="11">Performance Tasks (${section.weights[1]}%)</th><th class="component-header component-qa border-start-qa" scope="colgroup" colspan="6">Quarterly Assessment (${section.weights[2]}%)</th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
       <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>${dateHeaders("qa", period.qaDates, ["ST 1 (30%)", "ST 2 (30%)", "Term Exam (40%)"])}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th></tr>
@@ -225,8 +259,7 @@
       </thead><tbody>${rows}</tbody></table></div>`;
   }
 
-  // Revision 3b & Revision 5: Category styling, disabled score boxes, and boundary line classes
-  function renderLearnerRow(learner, rowIndex, period, section) {
+  function renderLearnerRow(learner, rowIndex, period, section, numDisplay) {
     const cat = getLearnerCategory(learner.name);
     const catClass = cat ? `row-category row-category-${cat}` : "";
 
@@ -236,7 +269,7 @@
       return `<td class="${tdBorderClass}"><input class="${inputClasses}" type="text" inputmode="text" maxlength="6" autocomplete="off" data-score="${kind}" data-row="${rowIndex}" data-index="${index}" value="${safeValue(cat ? "" : value)}" ${cat ? 'disabled tabindex="-1"' : ''} title="Enter a numeric score, or A (Absent), E (Excused), L (Late)" aria-label="Learner ${rowIndex + 1} ${kind.toUpperCase()} ${index + 1}"></td>`;
     }).join("");
     const result = learnerResult(learner, period, section.weights);
-    return `<tr class="${catClass}" data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${rowIndex + 1}</th><td class="name-cell"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td></tr>`;
+    return `<tr class="${catClass}" data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${numDisplay !== undefined ? numDisplay : ""}</th><td class="name-cell"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td></tr>`;
   }
 
   function learnerResult(learner, period, weights) {
@@ -399,6 +432,142 @@
     reader.readAsDataURL(file);
   }
 
+  // Revision C: Coordinate mapping for selection and bulk paste
+  const FIELD_ORDER_LENGTH = 22;
+  function fieldStartColumn(target) {
+    if (target.dataset.nameRow !== undefined) return 0;
+    if (target.dataset.score === "ww") return 1 + Number(target.dataset.index);
+    if (target.dataset.score === "pt") return 11 + Number(target.dataset.index);
+    if (target.dataset.score === "qa") return 19 + Number(target.dataset.index);
+    return null;
+  }
+
+  function getCellCoords(input) {
+    const row = Number(input.dataset.nameRow !== undefined ? input.dataset.nameRow : input.dataset.row);
+    const col = fieldStartColumn(input);
+    return (Number.isFinite(row) && col !== null) ? { row, col } : null;
+  }
+
+  function getSelectionBounds() {
+    if (!selectionState.active && selectionState.startRow === null) return null;
+    const minRow = Math.min(selectionState.startRow, selectionState.endRow);
+    const maxRow = Math.max(selectionState.startRow, selectionState.endRow);
+    const minCol = Math.min(selectionState.startCol, selectionState.endCol);
+    const maxCol = Math.max(selectionState.startCol, selectionState.endCol);
+    return { minRow, maxRow, minCol, maxCol };
+  }
+
+  function highlightSelection() {
+    const bounds = getSelectionBounds();
+    document.querySelectorAll(".record-table tbody input").forEach((input) => {
+      const coords = getCellCoords(input);
+      if (!coords || !bounds) { input.classList.remove("cell-selected"); return; }
+      const isSelected = coords.row >= bounds.minRow && coords.row <= bounds.maxRow &&
+                         coords.col >= bounds.minCol && coords.col <= bounds.maxCol &&
+                         (bounds.minRow !== bounds.maxRow || bounds.minCol !== bounds.maxCol);
+      input.classList.toggle("cell-selected", isSelected);
+    });
+  }
+
+  function clearSelection() {
+    selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
+    document.querySelectorAll(".cell-selected").forEach((el) => el.classList.remove("cell-selected"));
+  }
+
+  // Mouse selection event listeners
+  app.addEventListener("mousedown", (event) => {
+    const input = event.target.closest(".record-table tbody input");
+    if (!input || event.button !== 0) { if (!event.target.closest(".record-table tbody")) clearSelection(); return; }
+    const coords = getCellCoords(input);
+    if (!coords) return;
+    selectionState.active = true;
+    selectionState.startRow = selectionState.endRow = coords.row;
+    selectionState.startCol = selectionState.endCol = coords.col;
+    highlightSelection();
+  });
+
+  app.addEventListener("mouseover", (event) => {
+    if (!selectionState.active || event.buttons !== 1) return;
+    const input = event.target.closest(".record-table tbody input");
+    if (!input) return;
+    const coords = getCellCoords(input);
+    if (!coords) return;
+    selectionState.endRow = coords.row;
+    selectionState.endCol = coords.col;
+    highlightSelection();
+  });
+
+  document.addEventListener("mouseup", () => { if (selectionState.active) selectionState.active = false; });
+
+  // Keyboard multi-cell commands (Cut, Copy, Delete, Escape)
+  document.addEventListener("keydown", (event) => {
+    const bounds = getSelectionBounds();
+    const hasMultiSelection = bounds && (bounds.minRow !== bounds.maxRow || bounds.minCol !== bounds.maxCol);
+    if (!hasMultiSelection) return;
+
+    if (event.key === "Escape") { clearSelection(); return; }
+
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      const period = currentPeriod();
+      for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+        const l = period.roster[r];
+        for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+          if (c === 0) l.name = "";
+          else if (c <= 10) l.ww[c - 1] = "";
+          else if (c <= 18) l.pt[c - 11] = "";
+          else if (c <= 21) l.qa[c - 19] = "";
+        }
+      }
+      render();
+      setStatus(`Cleared selected block.`);
+      return;
+    }
+  });
+
+  document.addEventListener("copy", (event) => {
+    const bounds = getSelectionBounds();
+    if (!bounds || (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol && document.activeElement.tagName === "INPUT")) return;
+    const period = currentPeriod();
+    const lines = [];
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      const rowVals = [];
+      const l = period.roster[r];
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        if (c === 0) rowVals.push(l.name || "");
+        else if (c <= 10) rowVals.push(l.ww[c - 1] || "");
+        else if (c <= 18) rowVals.push(l.pt[c - 11] || "");
+        else if (c <= 21) rowVals.push(l.qa[c - 19] || "");
+      }
+      lines.push(rowVals.join("\t"));
+    }
+    event.clipboardData.setData("text/plain", lines.join("\n"));
+    event.preventDefault();
+    setStatus(`Copied ${bounds.maxRow - bounds.minRow + 1} rows × ${bounds.maxCol - bounds.minCol + 1} columns to clipboard.`);
+  });
+
+  document.addEventListener("cut", (event) => {
+    const bounds = getSelectionBounds();
+    if (!bounds || (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol && document.activeElement.tagName === "INPUT")) return;
+    const period = currentPeriod();
+    const lines = [];
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      const rowVals = [];
+      const l = period.roster[r];
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        if (c === 0) { rowVals.push(l.name || ""); l.name = ""; }
+        else if (c <= 10) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
+        else if (c <= 18) { rowVals.push(l.pt[c - 11] || ""); l.pt[c - 11] = ""; }
+        else if (c <= 21) { rowVals.push(l.qa[c - 19] || ""); l.qa[c - 19] = ""; }
+      }
+      lines.push(rowVals.join("\t"));
+    }
+    event.clipboardData.setData("text/plain", lines.join("\n"));
+    event.preventDefault();
+    render();
+    setStatus(`Cut ${bounds.maxRow - bounds.minRow + 1} rows × ${bounds.maxCol - bounds.minCol + 1} columns.`);
+  });
+
   document.addEventListener("click", (event) => {
     const target = event.target.closest("[data-action]");
     if (!target) return;
@@ -424,7 +593,6 @@
     if (action === "choose-photo") choosePhoto();
   });
 
-  // Revision 3a & 3b: Handle dynamic width and category score clearing on typing
   app.addEventListener("input", (event) => {
     const input = event.target;
     if (input.dataset.nameRow !== undefined) { 
@@ -443,6 +611,7 @@
           render();
         } else {
           updateLiveSummary(rowIndex);
+          updateAllNumberingAndCounts();
         }
       }
       adjustNameColumnWidth();
@@ -458,21 +627,10 @@
     if (input.dataset.hps) { currentPeriod()[`${input.dataset.hps}Hps`][Number(input.dataset.index)] = input.value; updateAllSummaries(); }
   });
 
-  const FIELD_ORDER_LENGTH = 22;
-  function fieldStartColumn(target) {
-    if (target.dataset.nameRow !== undefined) return 0;
-    if (target.dataset.score === "ww") return 1 + Number(target.dataset.index);
-    if (target.dataset.score === "pt") return 11 + Number(target.dataset.index);
-    if (target.dataset.score === "qa") return 19 + Number(target.dataset.index);
-    return null;
-  }
-
-  function applyBulkPaste(target, text) {
+  function applyBulkPaste(startRow, startCol, text) {
     const section = currentSection();
     const period = currentPeriod();
-    const startRow = Number(target.dataset.nameRow !== undefined ? target.dataset.nameRow : target.dataset.row);
-    const startColumn = fieldStartColumn(target);
-    if (!Number.isFinite(startRow) || startColumn === null) return;
+    if (!Number.isFinite(startRow) || startCol === null) return;
 
     const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     while (lines.length && lines[lines.length - 1] === "") lines.pop();
@@ -487,7 +645,7 @@
       const learner = period.roster[rowIndex];
       const cells = line.split("\t");
       cells.forEach((cellValue, cellOffset) => {
-        const column = startColumn + cellOffset;
+        const column = startCol + cellOffset;
         if (column >= FIELD_ORDER_LENGTH) { truncated = true; return; }
         const value = cellValue.trim();
         if (column === 0) { learner.name = value; return; }
@@ -498,7 +656,6 @@
       rowsFilled += 1;
     });
 
-    // Revision 3b: Wipe numeric scores if pasted into a Boys/Girls category row
     period.roster.forEach((l) => {
       if (getLearnerCategory(l.name)) {
         l.ww.fill("");
@@ -507,6 +664,7 @@
       }
     });
 
+    clearSelection();
     render();
     const overflowNote = truncated ? " Some pasted data went past the roster size or the last QA column and was left out." : "";
     setStatus(`Bulk paste filled ${rowsFilled} row${rowsFilled === 1 ? "" : "s"}.${overflowNote}`);
@@ -515,11 +673,18 @@
   app.addEventListener("paste", (event) => {
     const target = event.target;
     const isPasteable = target && target.dataset && (target.dataset.nameRow !== undefined || target.dataset.score !== undefined);
-    if (!isPasteable) return;
+    if (!isPasteable && !selectionState.active) return;
     const text = (event.clipboardData || window.clipboardData).getData("text");
     if (!text || !/[\t\n\r]/.test(text)) return;
     event.preventDefault();
-    applyBulkPaste(target, text);
+
+    const bounds = getSelectionBounds();
+    if (bounds) {
+      applyBulkPaste(bounds.minRow, bounds.minCol, text);
+    } else {
+      const coords = getCellCoords(target);
+      if (coords) applyBulkPaste(coords.row, coords.col, text);
+    }
   });
 
   app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
