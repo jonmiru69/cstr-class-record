@@ -6,15 +6,7 @@
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
-  // The Save button and status line now live inside the header, which is
-  // regenerated on every render(), so they are looked up fresh each time
-  // (see saveButtonEl/statusMessageEl) instead of being cached once here.
 
-  // This is intentionally only a convenience gate for one static-site owner.
-  // It is not real security: anyone who can view this source can find the check.
-  // Section color themes: green = Saint John Stone (SJST), blue = Saint Pedro
-  // Calungsod (SPC), red = Saint Ezekiel Moreno (SEM), purple = Saint Alfonso
-  // de Orozco (SAO). SHS sections keep blue.
   const registry = [
     { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", rosterSize: 42 },
     { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", rosterSize: 42 },
@@ -95,10 +87,41 @@
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
   function button(label, action, className = "button", extra = "") { return `<button type="button" class="${className}" data-action="${action}" ${extra}>${label}</button>`; }
 
-  // Keeps a raw/HPS score cell to either a plain number (with at most one
-  // decimal point) or one of the attendance codes A (Absent), E (Excused),
-  // L (Late). Anything else typed or pasted is stripped as it is entered so
-  // the underlying data always stays valid for the grading engine.
+  // Revision 3b: Detect "Boys" and "Girls" category rows
+  function getLearnerCategory(name) {
+    if (typeof name !== "string") return null;
+    const clean = name.trim().toLowerCase();
+    if (clean === "boys") return "boys";
+    if (clean === "girls") return "girls";
+    return null;
+  }
+
+  // Revision 3a: Automatically calculate longest name and adjust column width
+  function adjustNameColumnWidth() {
+    const period = currentPeriod();
+    if (!period || !period.roster) return;
+    let maxLen = 14;
+    period.roster.forEach((learner) => {
+      const len = (learner.name || "").length;
+      if (len > maxLen) maxLen = len;
+    });
+    document.querySelectorAll(".name-cell input").forEach((input) => {
+      if (input.value.length > maxLen) maxLen = input.value.length;
+    });
+    const newWidth = Math.max(180, Math.ceil(maxLen * 8.8 + 36));
+    document.documentElement.style.setProperty("--name-col-width", `${newWidth}px`);
+  }
+
+  // Revision 1: Check scroll depth to toggle shrunk sticky header
+  function updateHeaderScroll() {
+    const header = document.querySelector(".app-header");
+    if (!header) return;
+    if (window.scrollY > 30) header.classList.add("header-shrunk");
+    else header.classList.remove("header-shrunk");
+  }
+
+  window.addEventListener("scroll", updateHeaderScroll, { passive: true });
+
   function sanitizeScoreValue(raw) {
     if (raw === "" || raw === null || raw === undefined) return "";
     const trimmed = String(raw).trim();
@@ -113,6 +136,8 @@
   function render() {
     app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
     syncSaveControl();
+    adjustNameColumnWidth();
+    updateHeaderScroll();
   }
 
   function renderLogin() {
@@ -180,28 +205,38 @@
       ${renderRecordTable(section, period)}</div>`;
   }
 
+  // Revision 5: Added explicit border-start-pt and border-start-qa classes to index 0 of PT and QA
   function renderRecordTable(section, period) {
     const dateHeaders = (kind, values, labels = []) => values.map((value, index) => {
       const label = labels[index] ? `<span>${labels[index]}</span>` : "";
-      return `<th scope="col" class="activity-date-cell">${label}<input class="activity-date" type="text" maxlength="12" placeholder="Date" data-date="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} activity ${index + 1} date"></th>`;
+      const borderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
+      return `<th scope="col" class="activity-date-cell ${borderClass}">${label}<input class="activity-date" type="text" maxlength="12" placeholder="Date" data-date="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} activity ${index + 1} date"></th>`;
     }).join("");
-    const hpsInputs = (kind, values) => values.map((value, index) => `<td><input type="number" min="0" step="any" inputmode="decimal" data-hps="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} ${index + 1} highest possible score"></td>`).join("");
+    const hpsInputs = (kind, values) => values.map((value, index) => {
+      const borderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
+      return `<td class="${borderClass}"><input type="number" min="0" step="any" inputmode="decimal" data-hps="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} ${index + 1} highest possible score"></td>`;
+    }).join("");
     const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section)).join("");
     return `<div class="table-wrap"><table class="record-table compact-record"><thead>
-      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="13">Written Works (${section.weights[0]}%)</th><th class="component-header component-pt" scope="colgroup" colspan="11">Performance Tasks (${section.weights[1]}%)</th><th class="component-header component-qa" scope="colgroup" colspan="6">Quarterly Assessment (${section.weights[2]}%)</th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
+      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="13">Written Works (${section.weights[0]}%)</th><th class="component-header component-pt border-start-pt" scope="colgroup" colspan="11">Performance Tasks (${section.weights[1]}%)</th><th class="component-header component-qa border-start-qa" scope="colgroup" colspan="6">Quarterly Assessment (${section.weights[2]}%)</th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
       <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>${dateHeaders("qa", period.qaDates, ["ST 1 (30%)", "ST 2 (30%)", "Term Exam (40%)"])}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th></tr>
-      <tr class="hps-row"><th colspan="10" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="8" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="3" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
+      <tr class="hps-row"><th colspan="10" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="8" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="3" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
       <tr class="hps-input-row"><th colspan="2" scope="row">Enter HPS</th>${hpsInputs("ww", period.wwHps)}<td colspan="3">&nbsp;</td>${hpsInputs("pt", period.ptHps)}<td colspan="3">&nbsp;</td>${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td>&nbsp;</td></tr>
       </thead><tbody>${rows}</tbody></table></div>`;
   }
 
+  // Revision 3b & Revision 5: Category styling, disabled score boxes, and boundary line classes
   function renderLearnerRow(learner, rowIndex, period, section) {
+    const cat = getLearnerCategory(learner.name);
+    const catClass = cat ? `row-category row-category-${cat}` : "";
+
     const scoreInputs = (kind, values, hpsValues) => values.map((value, index) => {
-      const classes = [hasRawAboveHps(value, hpsValues[index]) ? "invalid" : "", isAttendanceCode(value) ? "code-cell" : ""].filter(Boolean).join(" ");
-      return `<td><input class="${classes}" type="text" inputmode="text" maxlength="6" autocomplete="off" data-score="${kind}" data-row="${rowIndex}" data-index="${index}" value="${safeValue(value)}" title="Enter a numeric score, or A (Absent), E (Excused), L (Late)" aria-label="Learner ${rowIndex + 1} ${kind.toUpperCase()} ${index + 1}"></td>`;
+      const tdBorderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
+      const inputClasses = [hasRawAboveHps(value, hpsValues[index]) ? "invalid" : "", isAttendanceCode(value) ? "code-cell" : ""].filter(Boolean).join(" ");
+      return `<td class="${tdBorderClass}"><input class="${inputClasses}" type="text" inputmode="text" maxlength="6" autocomplete="off" data-score="${kind}" data-row="${rowIndex}" data-index="${index}" value="${safeValue(cat ? "" : value)}" ${cat ? 'disabled tabindex="-1"' : ''} title="Enter a numeric score, or A (Absent), E (Excused), L (Late)" aria-label="Learner ${rowIndex + 1} ${kind.toUpperCase()} ${index + 1}"></td>`;
     }).join("");
     const result = learnerResult(learner, period, section.weights);
-    return `<tr data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${rowIndex + 1}</th><td class="name-cell"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td></tr>`;
+    return `<tr class="${catClass}" data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${rowIndex + 1}</th><td class="name-cell"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td></tr>`;
   }
 
   function learnerResult(learner, period, weights) {
@@ -276,8 +311,6 @@
   }
 
   function syncSaveControl() {
-    // The Save button only exists once logged in, since it now lives inside
-    // the app header rather than floating over the login screen.
     const btn = document.querySelector("#saveChanges");
     if (!btn) return;
     btn.disabled = false;
@@ -366,7 +399,6 @@
     reader.readAsDataURL(file);
   }
 
-  // Settings lives in a modal appended to body, so delegated clicks must listen on document.
   document.addEventListener("click", (event) => {
     const target = event.target.closest("[data-action]");
     if (!target) return;
@@ -392,9 +424,29 @@
     if (action === "choose-photo") choosePhoto();
   });
 
+  // Revision 3a & 3b: Handle dynamic width and category score clearing on typing
   app.addEventListener("input", (event) => {
     const input = event.target;
-    if (input.dataset.nameRow !== undefined) { currentPeriod().roster[Number(input.dataset.nameRow)].name = input.value; }
+    if (input.dataset.nameRow !== undefined) { 
+      const rowIndex = Number(input.dataset.nameRow);
+      const learner = currentPeriod().roster[rowIndex];
+      learner.name = input.value;
+      const cat = getLearnerCategory(learner.name);
+      if (cat) {
+        learner.ww.fill("");
+        learner.pt.fill("");
+        learner.qa.fill("");
+        render();
+      } else {
+        const rowEl = document.querySelector(`[data-learner-row="${rowIndex}"]`);
+        if (rowEl && rowEl.classList.contains("row-category")) {
+          render();
+        } else {
+          updateLiveSummary(rowIndex);
+        }
+      }
+      adjustNameColumnWidth();
+    }
     if (input.dataset.periodName !== undefined) { currentPeriod().name = input.value; }
     if (input.dataset.date) { currentPeriod()[`${input.dataset.date}Dates`][Number(input.dataset.index)] = input.value; }
     if (input.dataset.score) {
@@ -406,11 +458,7 @@
     if (input.dataset.hps) { currentPeriod()[`${input.dataset.hps}Hps`][Number(input.dataset.index)] = input.value; updateAllSummaries(); }
   });
 
-  // Bulk paste: click any Name cell or score cell, then paste a multi-row
-  // and/or multi-column block copied from Excel/Google Sheets. The paste is
-  // only intercepted when it actually contains more than one cell (a tab or
-  // a line break) so a normal single-value paste still behaves natively.
-  const FIELD_ORDER_LENGTH = 22; // 1 name + 10 WW + 8 PT + 3 QA
+  const FIELD_ORDER_LENGTH = 22;
   function fieldStartColumn(target) {
     if (target.dataset.nameRow !== undefined) return 0;
     if (target.dataset.score === "ww") return 1 + Number(target.dataset.index);
@@ -450,6 +498,15 @@
       rowsFilled += 1;
     });
 
+    // Revision 3b: Wipe numeric scores if pasted into a Boys/Girls category row
+    period.roster.forEach((l) => {
+      if (getLearnerCategory(l.name)) {
+        l.ww.fill("");
+        l.pt.fill("");
+        l.qa.fill("");
+      }
+    });
+
     render();
     const overflowNote = truncated ? " Some pasted data went past the roster size or the last QA column and was left out." : "";
     setStatus(`Bulk paste filled ${rowsFilled} row${rowsFilled === 1 ? "" : "s"}.${overflowNote}`);
@@ -460,8 +517,6 @@
     const isPasteable = target && target.dataset && (target.dataset.nameRow !== undefined || target.dataset.score !== undefined);
     if (!isPasteable) return;
     const text = (event.clipboardData || window.clipboardData).getData("text");
-    // A single-cell paste (no tab, no line break) is left to the browser's
-    // normal paste behavior so it still respects cursor position and undo.
     if (!text || !/[\t\n\r]/.test(text)) return;
     event.preventDefault();
     applyBulkPaste(target, text);
