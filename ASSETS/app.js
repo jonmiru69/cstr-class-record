@@ -212,7 +212,7 @@
     return `<header class="app-header"><div class="app-header-inner">
       <div class="app-header-brand">
         <span class="header-logo"><img src="ASSETS/cstr-logo.png" alt="Colegio de Sto. Tomás – Recoletos crest"></span>
-        <div><p class="eyebrow">CST-R • San Carlos City, 6127 Negros Occidental</p>
+        <div><p class="eyebrow">CST-R | San Carlos City, 6127 Negros Occidental</p>
         <h1 class="app-title">Colegio de Sto. Tomás – Recoletos, Incorporated</h1>
         <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026.</p></div>
       </div>
