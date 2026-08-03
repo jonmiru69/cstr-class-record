@@ -3,11 +3,12 @@
 
   const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode } = window.CSTRGrading;
   const LOGIN_PASSWORD = "harty342002";
+  const NEW_USER_PASSWORD = "maamsamcstr1234";
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
 
-  const registry = [
+  const defaultRegistry = [
     { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
     { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
     { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science - Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
@@ -19,7 +20,7 @@
 
   let currentView = "home";
   let activeGroup = "JHS";
-  let activeSectionId = registry[0].id;
+  let activeSectionId = null;
   let activePeriodIndex = 0;
   let state = createInitialState();
 
@@ -46,38 +47,47 @@
   }
 
   function createInitialState() {
-    return {
-      version: 1,
-      photo: "",
-      sections: Object.fromEntries(registry.map((section) => [section.id, { periods: [initialPeriod(section)] }]))
-    };
+    const st = { version: 2, photo: "", registry: JSON.parse(JSON.stringify(defaultRegistry)), sections: {} };
+    st.registry.forEach((section) => st.sections[section.id] = { periods: [initialPeriod(section)] });
+    return st;
   }
 
   function normalizeState(saved) {
     const base = createInitialState();
     if (!saved || typeof saved !== "object") return base;
     base.photo = typeof saved.photo === "string" ? saved.photo : "";
-    registry.forEach((section) => {
+    
+    // Restore saved custom registry classes if they exist
+    if (Array.isArray(saved.registry) && saved.registry.length > 0) {
+      base.registry = saved.registry;
+    }
+
+    base.registry.forEach((section) => {
       const loaded = saved.sections && saved.sections[section.id];
-      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) return;
-      base.sections[section.id].periods = loaded.periods.map((period) => ({
-        name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
-        wwDates: fitArray(period.wwDates, 10),
-        ptDates: fitArray(period.ptDates, 8),
-        qaDates: fitArray(period.qaDates, 3),
-        wwHps: fitArray(period.wwHps, 10),
-        ptHps: fitArray(period.ptHps, 8),
-        qaHps: fitArray(period.qaHps, 3),
-        roster: Array.from({ length: section.rosterSize }, (_, index) => {
-          const learner = Array.isArray(period.roster) ? period.roster[index] : null;
-          return {
-            name: learner && typeof learner.name === "string" ? learner.name : "",
-            ww: fitArray(learner && learner.ww, 10),
-            pt: fitArray(learner && learner.pt, 8),
-            qa: fitArray(learner && learner.qa, 3)
-          };
-        })
-      }));
+      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) {
+        base.sections[section.id] = { periods: [initialPeriod(section)] };
+        return;
+      }
+      base.sections[section.id] = {
+        periods: loaded.periods.map((period) => ({
+          name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
+          wwDates: fitArray(period.wwDates, 10),
+          ptDates: fitArray(period.ptDates, 8),
+          qaDates: fitArray(period.qaDates, 3),
+          wwHps: fitArray(period.wwHps, 10),
+          ptHps: fitArray(period.ptHps, 8),
+          qaHps: fitArray(period.qaHps, 3),
+          roster: Array.from({ length: section.rosterSize }, (_, index) => {
+            const learner = Array.isArray(period.roster) ? period.roster[index] : null;
+            return {
+              name: learner && typeof learner.name === "string" ? learner.name : "",
+              ww: fitArray(learner && learner.ww, 10),
+              pt: fitArray(learner && learner.pt, 8),
+              qa: fitArray(learner && learner.qa, 3)
+            };
+          })
+        }))
+      };
     });
     return base;
   }
@@ -86,7 +96,7 @@
     return Array.from({ length }, (_, index) => Array.isArray(values) && values[index] !== undefined ? values[index] : "");
   }
 
-  function currentSection() { return registry.find((section) => section.id === activeSectionId) || registry[0]; }
+  function currentSection() { return state.registry.find((section) => section.id === activeSectionId) || state.registry[0]; }
   function currentPeriod() { return state.sections[activeSectionId].periods[activePeriodIndex]; }
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
@@ -113,6 +123,7 @@
   }
 
   function updateAllNumberingAndCounts() {
+    if (!activeSectionId || !state.sections[activeSectionId]) return;
     const period = currentPeriod();
     if (!period || !period.roster) return;
     const { numbering, totalLearners } = computeLearnerNumbering(period.roster);
@@ -125,6 +136,7 @@
   }
 
   function adjustNameColumnWidth() {
+    if (!activeSectionId || !state.sections[activeSectionId]) return;
     const period = currentPeriod();
     if (!period || !period.roster) return;
     let maxLen = 14;
@@ -161,9 +173,17 @@
 
   function render() {
     app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
+    
+    if (sessionStorage.getItem("cstr-new-user-guide") === "pending") {
+      showStartupGuideModal();
+      sessionStorage.removeItem("cstr-new-user-guide");
+    }
+
     syncSaveControl();
-    adjustNameColumnWidth();
-    updateAllNumberingAndCounts();
+    if (currentView === "record") {
+      adjustNameColumnWidth();
+      updateAllNumberingAndCounts();
+    }
     updateHeaderScroll();
   }
 
@@ -213,13 +233,36 @@
   function renderClassRecord() {
     const edge = (group) => group === "JHS" ? `<span class="level-edge edge-green"></span><span class="level-edge edge-yellow"></span><span class="level-edge edge-red"></span><span class="level-edge edge-blue"></span>` : `<span class="level-edge edge-charcoal"></span><span class="level-edge edge-baby-blue"></span><span class="level-edge edge-deep-red"></span>`;
     const groupCards = ["JHS", "SHS"].map((group) => `<button type="button" class="level-card level-card-${group.toLowerCase()} ${activeGroup === group ? "is-active" : ""}" data-action="select-group" data-group="${group}">${edge(group)}<span class="level-card-kicker">${group}</span><strong>${group === "JHS" ? "Junior High School" : "Senior High School"}</strong><small>Choose a level to view its sections</small></button>`).join("");
-    const sections = registry.filter((section) => section.group === activeGroup);
-    const sectionCards = sections.map((section) => `<button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>`).join("");
-    return `<section class="record-chooser"><div class="section-heading"><div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p></div></div><div class="level-grid" aria-label="School levels">${groupCards}</div><div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div><div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div></section>`;
+    
+    const sections = state.registry.filter((section) => section.group === activeGroup);
+    const sectionCards = sections.map((section) => `
+      <div style="position: relative; display: flex;">
+        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}" style="width: 100%;">
+          <span>${escapeHtml(section.level)}</span>
+          <strong>${escapeHtml(section.subject)}</strong>
+          <small>Open grade sheet</small>
+        </button>
+        <button type="button" class="button button-yellow" data-action="edit-class" data-id="${section.id}" style="position: absolute; top: 10px; right: 10px; padding: 4px 10px; min-height: 28px; font-size: 0.78rem; z-index: 2; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">Edit</button>
+      </div>
+    `).join("");
+
+    return `<section class="record-chooser">
+      <div class="section-heading">
+        <div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p></div>
+        <div>${button("+ Add Class", "add-class", "button button-primary")}</div>
+      </div>
+      <div class="level-grid" aria-label="School levels">${groupCards}</div>
+      <div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div>
+      <div class="section-card-grid" aria-label="${activeGroup} sections">
+        ${sections.length > 0 ? sectionCards : `<p class="muted" style="grid-column: 1/-1;">No classes added yet. Click <strong>+ Add Class</strong> to set up a new subject.</p>`}
+      </div>
+    </section>`;
   }
 
   function renderSectionRecord() {
     const section = currentSection();
+    if (!section) return `<div class="record-section"><p>Error: Section not found.</p>${button("← Back", "go-records")}</div>`;
+    
     const periods = state.sections[section.id].periods;
     if (activePeriodIndex >= periods.length) activePeriodIndex = 0;
     const period = currentPeriod();
@@ -324,7 +367,7 @@
     const query = normalizedName(input && input.value);
     if (!query) { showSearchModal("Enter the student's complete name to check a grade."); return; }
     const matches = [];
-    registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
+    state.registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
       period.roster.forEach((learner) => {
         if (!normalizedName(learner.name).includes(query) || getLearnerCategory(learner.name)) return;
         const result = learnerResult(learner, period, section.weights);
@@ -340,6 +383,71 @@
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
     modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("Close", "close-search")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
+    document.body.append(modal);
+  }
+
+  function showStartupGuideModal() {
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop startup-guide-backdrop";
+    modal.innerHTML = `
+      <section class="modal search-result-modal" role="dialog" aria-modal="true">
+        <div class="section-heading">
+          <div><p class="eyebrow">Welcome to CSTR Class Record</p><h2>Getting Started</h2></div>
+        </div>
+        <div class="student-results">
+          <p class="muted">Hello Teacher! Since you handle different subject loads and grade levels, you can perfectly customize your records to fit your schedule.</p>
+          <p class="muted"><strong>Step 1:</strong> On the Home dashboard, proceed to the Class Record.</p>
+          <p class="muted"><strong>Step 2:</strong> Click the new <strong>+ Add Class</strong> button to set up your subjects, select grade levels (1-12), and type your section names.</p>
+          <p class="muted"><strong>Step 3:</strong> Pick a designated color code for your class for easy identification on the dashboard.</p>
+          <div style="margin-top: 24px;">
+            ${button("Got it, let's start!", "close-startup-guide", "button button-primary")}
+          </div>
+        </div>
+      </section>
+    `;
+    document.body.append(modal);
+  }
+
+  function renderClassModal(editId = null) {
+    const isEdit = !!editId;
+    const cls = isEdit ? state.registry.find(c => c.id === editId) : null;
+    
+    let gradeVal = "1";
+    let subjVal = "";
+    let secVal = "";
+    let colorVal = "deep-blue";
+
+    if (cls) {
+       gradeVal = cls.level.replace("Grade ", "").trim();
+       const parts = cls.subject.split(" - ");
+       subjVal = parts[0] || "";
+       secVal = parts.slice(1).join(" - ") || "";
+       colorVal = cls.theme;
+    }
+
+    const gradeOpts = Array.from({length:12}, (_, i) => `<option value="${i+1}" ${gradeVal==String(i+1)?'selected':''}>Grade ${i+1}</option>`).join('');
+    const colors = ['deep-red', 'deep-orange', 'deep-yellow', 'deep-purple', 'deep-blue', 'deep-green', 'deep-gray', 'deep-black', 'deep-white'];
+    const colorOpts = colors.map(c => `<option value="${c}" ${colorVal===c?'selected':''}>${c.replace('-', ' ').toUpperCase()}</option>`).join('');
+
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop class-modal-backdrop";
+    modal.innerHTML = `
+      <section class="modal">
+        <div class="section-heading">
+          <div><p class="eyebrow">${isEdit ? 'Update Details' : 'Create New'}</p><h2>${isEdit ? 'Edit Class' : 'Add Class'}</h2></div>
+          ${button("Close", "close-class-modal")}
+        </div>
+        <form id="classForm" class="settings-grid" data-edit-id="${editId || ''}">
+          <label>Grade Level (1-12) <select id="clsGrade" class="text-input" required>${gradeOpts}</select></label>
+          <label>Subject Name <input id="clsSubject" class="text-input" value="${safeValue(subjVal)}" required placeholder="e.g. Science or Math"></label>
+          <label>Name of Section <input id="clsSection" class="text-input" value="${safeValue(secVal)}" required placeholder="e.g. Saint Alfonso"></label>
+          <label>Color Code <select id="clsColor" class="text-input">${colorOpts}</select></label>
+          <div class="stack-actions" style="margin-top: 10px;">
+            ${button("Save Class", "save-class-submit", "button button-primary", 'type="submit"')}
+          </div>
+        </form>
+      </section>
+    `;
     document.body.append(modal);
   }
 
@@ -376,7 +484,6 @@
     if (btn) { btn.classList.toggle("saving", type === "saving"); btn.classList.toggle("error", type === "error"); }
   }
 
-  // Security Interlock: Physically block saving unless remote sync is confirmed
   function syncSaveControl() {
     const btn = document.querySelector("#saveChanges");
     if (!btn) return;
@@ -390,7 +497,7 @@
       setStatus("Syncing with GitHub Gist... Please wait.", "saving");
     } else if (!isDataLoaded) {
       btn.disabled = true;
-      setStatus("⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving to prevent overwriting.", "error");
+      setStatus("⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving.", "error");
     } else {
       btn.disabled = false;
       setStatus("Ready to save. ✓");
@@ -401,12 +508,10 @@
     if (sessionStorage.getItem("cstr-class-record-login") !== "true") { setStatus("Sign in before saving.", "error"); return; }
     const gistId = localStorage.getItem(GIST_ID_KEY);
     const token = localStorage.getItem(GIST_TOKEN_KEY);
-    if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token in Settings first.", "error"); return; }
+    if (!gistId || !token) { setStatus("Enter the Gist ID and PAT in Settings first.", "error"); return; }
     
-    // Hard Security Guardrail: Prevent execution if data was never confirmed loaded
     if (!isDataLoaded) {
-      setStatus("⚠️ BLOCKED: Cannot save un-synchronized data! Please reload data from Settings first.", "error");
-      alert("SECURITY BLOCK:\n\nYou are attempting to save while your remote GitHub data has not been confirmed loaded into this session.\n\nTo prevent overwriting and permanently losing your saved class records, saving has been blocked. Please open Settings and click 'Load saved data' first.");
+      setStatus("⚠️ BLOCKED: Cannot save un-synchronized data! Load data first.", "error");
       return;
     }
 
@@ -419,19 +524,18 @@
       });
       if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
       setStatus("Saved ✓");
-    } catch (error) { setStatus(`Error - check connection/token: ${error.message}`, "error"); }
+    } catch (error) { setStatus(`Error: ${error.message}`, "error"); }
   }
 
   async function loadFromGist() {
     const gistId = localStorage.getItem(GIST_ID_KEY);
     const token = localStorage.getItem(GIST_TOKEN_KEY);
-    if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token first.", "error"); return; }
+    if (!gistId || !token) { setStatus("Enter the Gist ID and PAT first.", "error"); return; }
     
     isLoading = true;
     syncSaveControl();
-    setStatus("Loading saved data from GitHub...", "saving");
+    setStatus("Loading saved data...", "saving");
     try {
-      // cache: "no-store" prevents browsers from serving stale/empty cached payloads
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { 
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
         cache: "no-store" 
@@ -444,15 +548,22 @@
       
       state = normalizeState(JSON.parse(content || "{}"));
       activePeriodIndex = 0;
-      isDataLoaded = true; // Mark remote source of truth as synchronized!
+      isDataLoaded = true;
       isLoading = false;
+      
+      // Update fallback variables to valid loaded instances
+      if (state.registry.length > 0) {
+         activeGroup = state.registry[0].group;
+         activeSectionId = state.registry[0].id;
+      }
+      
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
       isLoading = false;
-      isDataLoaded = false; // Lock Save button on failure
+      isDataLoaded = false;
       render();
-      setStatus(`Load Error: ${error.message}. Save is locked to protect data.`, "error"); 
+      setStatus(`Load Error: ${error.message}. Save is locked.`, "error"); 
     }
   }
 
@@ -476,7 +587,7 @@
     localStorage.setItem(GIST_TOKEN_KEY, token);
     closeSettings();
     setStatus("Settings saved. Auto-loading data now...");
-    loadFromGist(); // Auto-trigger load as soon as new settings are saved
+    loadFromGist(); 
   }
 
   function choosePhoto() { document.querySelector("#photoInput")?.click(); }
@@ -542,6 +653,46 @@
     selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
     document.querySelectorAll(".cell-selected").forEach((el) => el.classList.remove("cell-selected"));
   }
+
+  // --- Global Listeners ---
+
+  document.addEventListener("submit", (e) => {
+    if(e.target.id === "classForm") {
+      e.preventDefault();
+      const editId = e.target.dataset.editId;
+      const grade = parseInt(document.querySelector("#clsGrade").value);
+      const subject = document.querySelector("#clsSubject").value.trim();
+      const section = document.querySelector("#clsSection").value.trim();
+      const color = document.querySelector("#clsColor").value;
+
+      const group = grade <= 10 ? "JHS" : "SHS";
+      const levelStr = "Grade " + grade;
+      const subjectStr = subject + (section ? " - " + section : "");
+
+      if (editId) {
+        const cls = state.registry.find(c => c.id === editId);
+        if (cls) {
+          cls.group = group;
+          cls.level = levelStr;
+          cls.subject = subjectStr;
+          cls.theme = color;
+          cls.accent = color;
+        }
+      } else {
+        const newId = "class-" + Date.now();
+        const newCls = {
+          id: newId, group, level: levelStr, subject: subjectStr,
+          weights: [20, 50, 30], theme: color, accent: color, rosterSize: 42
+        };
+        state.registry.push(newCls);
+        state.sections[newId] = { periods: [initialPeriod(newCls)] };
+      }
+      
+      document.querySelector(".class-modal-backdrop")?.remove();
+      render();
+      setStatus("Class saved locally. Click 'Save Changes' to update GitHub.", "saving");
+    }
+  });
 
   app.addEventListener("mousedown", (event) => {
     const input = event.target.closest(".record-table tbody input");
@@ -642,8 +793,14 @@
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
-      if (password === LOGIN_PASSWORD) { 
+      if (password === LOGIN_PASSWORD || password === NEW_USER_PASSWORD) { 
         sessionStorage.setItem("cstr-class-record-login", "true"); 
+        
+        // Setup new user tutorial
+        if (password === NEW_USER_PASSWORD) {
+           sessionStorage.setItem("cstr-new-user-guide", "pending");
+        }
+
         render(); 
         if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
           loadFromGist(); 
@@ -657,7 +814,7 @@
     if (action === "logout") { sessionStorage.removeItem("cstr-class-record-login"); currentView = "home"; render(); }
     if (action === "go-home") { currentView = "home"; render(); }
     if (action === "go-records") { currentView = "chooser"; render(); }
-    if (action === "select-group") { activeGroup = target.dataset.group; activeSectionId = registry.find((section) => section.group === activeGroup).id; activePeriodIndex = 0; currentView = "chooser"; render(); }
+    if (action === "select-group") { activeGroup = target.dataset.group; const grp = state.registry.find(s => s.group === activeGroup); activeSectionId = grp ? grp.id : null; activePeriodIndex = 0; currentView = "chooser"; render(); }
     if (action === "select-section") { activeSectionId = target.dataset.section; activeGroup = currentSection().group; activePeriodIndex = 0; currentView = "record"; render(); }
     if (action === "select-period") { activePeriodIndex = Number(target.dataset.period); render(); }
     if (action === "add-period") addPeriod();
@@ -669,6 +826,12 @@
     if (action === "choose-photo") choosePhoto();
     if (action === "search-student") searchStudent();
     if (action === "close-search") document.querySelector(".modal-backdrop")?.remove();
+    
+    // Add & Edit Class modals
+    if (action === "add-class") renderClassModal();
+    if (action === "edit-class") renderClassModal(target.dataset.id);
+    if (action === "close-class-modal") document.querySelector(".class-modal-backdrop")?.remove();
+    if (action === "close-startup-guide") document.querySelector(".startup-guide-backdrop")?.remove();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -771,14 +934,14 @@
 
   app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
   
-  // INITIALIZATION ENGINE: Automatically sync on startup or page refresh!
+  // INITIALIZATION ENGINE
   function initApp() {
     render();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
       if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
-        loadFromGist(); // Auto-pull data immediately without requiring a button click
+        loadFromGist();
       } else {
-        isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+        isDataLoaded = true;
         syncSaveControl();
       }
     }
