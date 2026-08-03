@@ -2,26 +2,32 @@
   "use strict";
 
   const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode } = window.CSTRGrading;
-  const LOGIN_PASSWORD = "harty342002";
+  
+  // Authentication & Multi-Tenant Setup
+  const ACCOUNTS = ["harty342002", "maamsamcstr1234"];
+  let currentUser = sessionStorage.getItem("cstr-class-record-user") || null;
+  let currentGistData = {}; 
+
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
 
-  const registry = [
+  // Standardized Default Dataset (Only loaded for harty342002 on a fresh start)
+  const DEFAULT_REGISTRY_HARTY = [
     { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
-    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
+    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "deep-green", accent: "deep-green", rosterSize: 42 },
     { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science - Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
-    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III - Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42 },
-    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42 },
-    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42 },
-    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42 }
+    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III - Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "deep-red", accent: "deep-red", rosterSize: 42 },
+    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "gray", accent: "gray", rosterSize: 42 },
+    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
+    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Consolacion", weights: [20, 50, 30], theme: "deep-red", accent: "deep-red", rosterSize: 42 }
   ];
 
   let currentView = "home";
   let activeGroup = "JHS";
-  let activeSectionId = registry[0].id;
+  let activeSectionId = null;
   let activePeriodIndex = 0;
-  let state = createInitialState();
+  let state = null; // Points to currentGistData[currentUser]
 
   // Security & Sync Interlocks
   let isDataLoaded = false;
@@ -45,48 +51,58 @@
     };
   }
 
-  function createInitialState() {
-    return {
-      version: 1,
+  function createInitialState(userId) {
+    const isHarty = userId === "harty342002";
+    const initialRegistry = isHarty ? JSON.parse(JSON.stringify(DEFAULT_REGISTRY_HARTY)) : [];
+    const base = {
+      version: 2,
       photo: "",
-      sections: Object.fromEntries(registry.map((section) => [section.id, { periods: [initialPeriod(section)] }]))
+      teacherOverview: isHarty ? "Class record by full-time faculty member, Junior High School Science and Research teacher, Senior High School Physics and General Science teacher and Research adviser — **RAMELITO JR. C. SANCHEZ, LPT.**" : "",
+      registry: initialRegistry,
+      sections: {}
     };
-  }
-
-  function normalizeState(saved) {
-    const base = createInitialState();
-    if (!saved || typeof saved !== "object") return base;
-    base.photo = typeof saved.photo === "string" ? saved.photo : "";
-    registry.forEach((section) => {
-      const loaded = saved.sections && saved.sections[section.id];
-      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) return;
-      base.sections[section.id].periods = loaded.periods.map((period) => ({
-        name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
-        wwDates: fitArray(period.wwDates, 10),
-        ptDates: fitArray(period.ptDates, 8),
-        qaDates: fitArray(period.qaDates, 3),
-        wwHps: fitArray(period.wwHps, 10),
-        ptHps: fitArray(period.ptHps, 8),
-        qaHps: fitArray(period.qaHps, 3),
-        roster: Array.from({ length: section.rosterSize }, (_, index) => {
-          const learner = Array.isArray(period.roster) ? period.roster[index] : null;
-          return {
-            name: learner && typeof learner.name === "string" ? learner.name : "",
-            ww: fitArray(learner && learner.ww, 10),
-            pt: fitArray(learner && learner.pt, 8),
-            qa: fitArray(learner && learner.qa, 3)
-          };
-        })
-      }));
+    base.registry.forEach(sec => {
+      base.sections[sec.id] = { periods: [initialPeriod(sec)] };
     });
     return base;
   }
 
-  function fitArray(values, length) {
-    return Array.from({ length }, (_, index) => Array.isArray(values) && values[index] !== undefined ? values[index] : "");
+  function normalizeState(saved, userId) {
+    const base = createInitialState(userId);
+    if (!saved || typeof saved !== "object") return base;
+    base.photo = typeof saved.photo === "string" ? saved.photo : base.photo;
+    base.teacherOverview = typeof saved.teacherOverview === "string" ? saved.teacherOverview : base.teacherOverview;
+    base.registry = Array.isArray(saved.registry) ? saved.registry : base.registry;
+    
+    base.registry.forEach((section) => {
+      const loaded = saved.sections && saved.sections[section.id];
+      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) return;
+      base.sections[section.id] = {
+        periods: loaded.periods.map((period) => ({
+          name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
+          wwDates: fitArray(period.wwDates, 10),
+          ptDates: fitArray(period.ptDates, 8),
+          qaDates: fitArray(period.qaDates, 3),
+          wwHps: fitArray(period.wwHps, 10),
+          ptHps: fitArray(period.ptHps, 8),
+          qaHps: fitArray(period.qaHps, 3),
+          roster: Array.from({ length: section.rosterSize }, (_, index) => {
+            const learner = Array.isArray(period.roster) ? period.roster[index] : null;
+            return {
+              name: learner && typeof learner.name === "string" ? learner.name : "",
+              ww: fitArray(learner && learner.ww, 10),
+              pt: fitArray(learner && learner.pt, 8),
+              qa: fitArray(learner && learner.qa, 3)
+            };
+          })
+        }))
+      };
+    });
+    return base;
   }
 
-  function currentSection() { return registry.find((section) => section.id === activeSectionId) || registry[0]; }
+  function fitArray(values, length) { return Array.from({ length }, (_, index) => Array.isArray(values) && values[index] !== undefined ? values[index] : ""); }
+  function currentSection() { return state.registry.find((section) => section.id === activeSectionId) || state.registry[0]; }
   function currentPeriod() { return state.sections[activeSectionId].periods[activePeriodIndex]; }
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
@@ -113,6 +129,7 @@
   }
 
   function updateAllNumberingAndCounts() {
+    if (!activeSectionId) return;
     const period = currentPeriod();
     if (!period || !period.roster) return;
     const { numbering, totalLearners } = computeLearnerNumbering(period.roster);
@@ -125,6 +142,7 @@
   }
 
   function adjustNameColumnWidth() {
+    if (!activeSectionId) return;
     const period = currentPeriod();
     if (!period || !period.roster) return;
     let maxLen = 14;
@@ -159,18 +177,30 @@
     return numeric.slice(0, firstDot + 1) + numeric.slice(firstDot + 1).replace(/\./g, "");
   }
 
+  function checkOnboarding() {
+    if (currentUser === "maamsamcstr1234" && state.registry.length === 0 && !document.querySelector(".onboarding-backdrop")) {
+      const modal = document.createElement("div");
+      modal.className = "modal-backdrop onboarding-backdrop";
+      modal.innerHTML = `<section class="modal" role="dialog"><div class="section-heading"><div><p class="eyebrow">Welcome to CSTR Class Record</p><h2>Let's set up your workspace!</h2></div></div><p class="muted">As a brand new teacher account, your class record is currently empty. Click below to add your first subject load and section.</p><div class="stack-actions" style="margin-top: 24px;">${button("Add My First Class", "start-onboarding", "button button-primary")}</div></section>`;
+      document.body.append(modal);
+    }
+  }
+
   function render() {
-    app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
+    app.innerHTML = currentUser ? renderApp() : renderLogin();
     syncSaveControl();
-    adjustNameColumnWidth();
-    updateAllNumberingAndCounts();
+    if (currentUser && currentView === "record") {
+      adjustNameColumnWidth();
+      updateAllNumberingAndCounts();
+    }
     updateHeaderScroll();
+    if (currentUser) checkOnboarding();
   }
 
   function renderLogin() {
     return `<section class="login-screen"><div class="card">
-      <p class="eyebrow">CSTR Class Record</p><h1>Owner login</h1>
-      <p class="muted">This convenience gate is for the class-record owner. It is not a substitute for secure authentication.</p>
+      <p class="eyebrow">CSTR Class Record</p><h1>Teacher Login</h1>
+      <p class="muted">Please enter your assigned teacher credentials to access your isolated workspace.</p>
       <label class="field-label">Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
       ${button("Login", "login", "button button-primary")}
       <p id="loginError" class="login-error" role="alert"></p>
@@ -182,7 +212,7 @@
     return `<header class="app-header"><div class="app-header-inner">
       <div class="app-header-brand">
         <span class="header-logo"><img src="ASSETS/cstr-logo.png" alt="Colegio de Sto. Tomás – Recoletos crest"></span>
-        <div><p class="eyebrow">CSTR • San Carlos City, Negros Occidental</p>
+        <div><p class="eyebrow">CSTR • Calatrava, Negros Occidental</p>
         <h1 class="app-title">Colegio de Sto. Tomás – Recoletos, Incorporated</h1>
         <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026.</p></div>
       </div>
@@ -205,7 +235,8 @@
     const portrait = state.photo ? `<img class="profile-photo" src="${state.photo}" alt="Teacher portrait">` : `<span class="silhouette" aria-hidden="true"></span><span class="photo-caption">Upload photo</span>`;
     return `<section class="home-grid"><div><input id="photoInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
       <button class="photo-frame" type="button" data-action="choose-photo" aria-label="Upload teacher photo">${portrait}</button></div>
-      <div><p class="eyebrow">Class record owner</p><p class="teacher-block">Class record by full-time faculty member, Junior High School Science and Research teacher, Senior High School Physics and General Science teacher and Research adviser — <strong>RAMELITO JR. C. SANCHEZ, LPT.</strong></p>
+      <div><p class="eyebrow">Class record owner</p>
+      <textarea class="teacher-overview-input" data-overview-input placeholder="Enter your teacher overview and titles here...">${safeValue(state.teacherOverview)}</textarea>
       <div class="home-cta">${button("Proceed to Class Record →", "go-records", "button button-primary")}</div>
       <p id="photoNote" class="form-note">Photo uploads accept PNG and JPEG files only.</p></div></section>`;
   }
@@ -213,13 +244,46 @@
   function renderClassRecord() {
     const edge = (group) => group === "JHS" ? `<span class="level-edge edge-green"></span><span class="level-edge edge-yellow"></span><span class="level-edge edge-red"></span><span class="level-edge edge-blue"></span>` : `<span class="level-edge edge-charcoal"></span><span class="level-edge edge-baby-blue"></span><span class="level-edge edge-deep-red"></span>`;
     const groupCards = ["JHS", "SHS"].map((group) => `<button type="button" class="level-card level-card-${group.toLowerCase()} ${activeGroup === group ? "is-active" : ""}" data-action="select-group" data-group="${group}">${edge(group)}<span class="level-card-kicker">${group}</span><strong>${group === "JHS" ? "Junior High School" : "Senior High School"}</strong><small>Choose a level to view its sections</small></button>`).join("");
-    const sections = registry.filter((section) => section.group === activeGroup);
-    const sectionCards = sections.map((section) => `<button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>`).join("");
-    return `<section class="record-chooser"><div class="section-heading"><div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p></div></div><div class="level-grid" aria-label="School levels">${groupCards}</div><div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div><div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div></section>`;
+    const sections = state.registry.filter((section) => section.group === activeGroup);
+    const sectionCards = sections.map((section) => `<div class="section-card accent-${section.accent}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><div class="section-card-actions">${button("Open", "select-section", "", `data-section="${section.id}"`)}${button("Edit Class", "edit-class", "", `data-edit-id="${section.id}"`)}</div></div>`).join("");
+    return `<section class="record-chooser"><div class="section-heading"><div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Manage your classes securely below.</p></div>${button("+ Add New Class", "add-class", "button button-yellow")}</div><div class="level-grid" aria-label="School levels">${groupCards}</div><div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div><div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards.length ? sectionCards : "<p class='muted'>No classes added to this level yet.</p>"}</div></section>`;
+  }
+
+  function showClassModal(editId = null) {
+    const cls = editId ? state.registry.find(c => c.id === editId) : null;
+    const isEdit = !!cls;
+    const colors = ['deep-red', 'orange', 'yellow', 'purple', 'blue', 'deep-green', 'gray', 'black', 'white'];
+    const colorOptions = colors.map(c => `<option value="${c}" ${cls && cls.theme === c ? 'selected' : ''}>${c.replace('-', ' ').toUpperCase()}</option>`).join('');
+    let rawSubject = "", rawSection = "";
+    if (cls && cls.subject) {
+      const parts = cls.subject.split(" - ");
+      rawSubject = parts[0] || ""; rawSection = parts[1] || "";
+    }
+
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop class-editor-backdrop";
+    modal.innerHTML = `<section class="modal" role="dialog"><div class="section-heading"><div><p class="eyebrow">${isEdit ? 'Edit Class' : 'Add New Class'}</p><h2>${isEdit ? 'Update Section Details' : 'Create Section'}</h2></div>${button("Close", "close-modal")}</div>
+      <form class="class-modal-form">
+        <label class="field-label" style="margin:0;">Grade Level
+          <select id="classGrade" required>${[...Array(12)].map((_, i) => `<option value="Grade ${i+1}" ${cls && cls.level === `Grade ${i+1}` ? 'selected' : ''}>Grade ${i+1}</option>`).join('')}</select>
+        </label>
+        <label class="field-label" style="margin:0;">Subject Name
+          <input id="classSubject" type="text" value="${safeValue(rawSubject)}" placeholder="e.g. Science" required>
+        </label>
+        <label class="field-label" style="margin:0;">Section Name
+          <input id="classSectionName" type="text" value="${safeValue(rawSection)}" placeholder="e.g. Saint John Stone" required>
+        </label>
+        <label class="field-label" style="margin:0;">Color Palette
+          <select id="classColor">${colorOptions}</select>
+        </label>
+        <div class="stack-actions" style="margin-top: 10px;">${button(isEdit ? "Save Changes" : "Save Class", "save-class-submit", "button button-primary", `data-edit-id="${editId || ''}"`)}</div>
+      </form></section>`;
+    document.body.append(modal);
   }
 
   function renderSectionRecord() {
     const section = currentSection();
+    if (!section) return `<div class="record-back">${button("← Back", "go-records")}</div><p>Section missing.</p>`;
     const periods = state.sections[section.id].periods;
     if (activePeriodIndex >= periods.length) activePeriodIndex = 0;
     const period = currentPeriod();
@@ -310,9 +374,7 @@
     render();
   }
 
-  function normalizedName(value) {
-    return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
-  }
+  function normalizedName(value) { return String(value || "").trim().replace(/\s+/g, " ").toLowerCase(); }
 
   function isPeriodFinalized(period, section) {
     const learners = period.roster.filter((learner) => learner.name.trim() && !getLearnerCategory(learner.name));
@@ -324,7 +386,7 @@
     const query = normalizedName(input && input.value);
     if (!query) { showSearchModal("Enter the student's complete name to check a grade."); return; }
     const matches = [];
-    registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
+    state.registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
       period.roster.forEach((learner) => {
         if (!normalizedName(learner.name).includes(query) || getLearnerCategory(learner.name)) return;
         const result = learnerResult(learner, period, section.weights);
@@ -339,7 +401,7 @@
   function showSearchModal(message, isHtml = false) {
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
-    modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("Close", "close-search")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
+    modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("Close", "close-modal")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
     document.body.append(modal);
   }
 
@@ -376,46 +438,34 @@
     if (btn) { btn.classList.toggle("saving", type === "saving"); btn.classList.toggle("error", type === "error"); }
   }
 
-  // Security Interlock: Physically block saving unless remote sync is confirmed
   function syncSaveControl() {
     const btn = document.querySelector("#saveChanges");
     if (!btn) return;
-    
     const hasCreds = Boolean(localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY));
-    if (!hasCreds) {
-      btn.disabled = false;
-      setStatus("Add your Gist ID and PAT in Settings to enable sync.");
-    } else if (isLoading) {
-      btn.disabled = true;
-      setStatus("Syncing with GitHub Gist... Please wait.", "saving");
-    } else if (!isDataLoaded) {
-      btn.disabled = true;
-      setStatus("⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving to prevent overwriting.", "error");
-    } else {
-      btn.disabled = false;
-      setStatus("Ready to save. ✓");
-    }
+    if (!hasCreds) { btn.disabled = false; setStatus("Add your Gist ID and PAT in Settings to enable sync."); } 
+    else if (isLoading) { btn.disabled = true; setStatus("Syncing with GitHub Gist... Please wait.", "saving"); } 
+    else if (!isDataLoaded) { btn.disabled = true; setStatus("⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving.", "error"); } 
+    else { btn.disabled = false; setStatus("Ready to save. ✓"); }
   }
 
   async function saveToGist() {
-    if (sessionStorage.getItem("cstr-class-record-login") !== "true") { setStatus("Sign in before saving.", "error"); return; }
+    if (!currentUser) { setStatus("Sign in before saving.", "error"); return; }
     const gistId = localStorage.getItem(GIST_ID_KEY);
     const token = localStorage.getItem(GIST_TOKEN_KEY);
     if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token in Settings first.", "error"); return; }
-    
-    // Hard Security Guardrail: Prevent execution if data was never confirmed loaded
     if (!isDataLoaded) {
       setStatus("⚠️ BLOCKED: Cannot save un-synchronized data! Please reload data from Settings first.", "error");
-      alert("SECURITY BLOCK:\n\nYou are attempting to save while your remote GitHub data has not been confirmed loaded into this session.\n\nTo prevent overwriting and permanently losing your saved class records, saving has been blocked. Please open Settings and click 'Load saved data' first.");
+      alert("SECURITY BLOCK:\n\nYou are attempting to save while your remote GitHub data has not been confirmed loaded into this session.");
       return;
     }
 
     setStatus("Saving...", "saving");
     try {
+      currentGistData[currentUser] = state; // Isolate saving specifically for active user
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
         method: "PATCH",
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ files: { "cstr-class-record-data.json": { content: JSON.stringify(state) } } })
+        body: JSON.stringify({ files: { "cstr-class-record-data.json": { content: JSON.stringify(currentGistData) } } })
       });
       if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
       setStatus("Saved ✓");
@@ -431,7 +481,6 @@
     syncSaveControl();
     setStatus("Loading saved data from GitHub...", "saving");
     try {
-      // cache: "no-store" prevents browsers from serving stale/empty cached payloads
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { 
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
         cache: "no-store" 
@@ -442,16 +491,22 @@
       if (!file) throw new Error("No JSON file was found in this Gist.");
       const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : file.content;
       
-      state = normalizeState(JSON.parse(content || "{}"));
+      const parsedData = JSON.parse(content || "{}");
+      // Handle legacy root structure by wrapping into harty342002
+      if (parsedData.version && !parsedData["harty342002"]) {
+        currentGistData = { "harty342002": parsedData };
+      } else {
+        currentGistData = parsedData;
+      }
+
+      state = normalizeState(currentGistData[currentUser], currentUser);
       activePeriodIndex = 0;
-      isDataLoaded = true; // Mark remote source of truth as synchronized!
+      isDataLoaded = true; 
       isLoading = false;
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
-      isLoading = false;
-      isDataLoaded = false; // Lock Save button on failure
-      render();
+      isLoading = false; isDataLoaded = false; render();
       setStatus(`Load Error: ${error.message}. Save is locked to protect data.`, "error"); 
     }
   }
@@ -459,33 +514,19 @@
   function renderSettings() {
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
-    modal.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="section-heading"><div><p class="eyebrow">GitHub Gist sync</p><h2 id="settingsTitle">Settings</h2></div>${button("Close", "close-settings")}</div>
+    modal.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="section-heading"><div><p class="eyebrow">GitHub Gist sync</p><h2 id="settingsTitle">Settings</h2></div>${button("Close", "close-modal")}</div>
       <div class="settings-grid"><label>Gist ID<input id="gistId" value="${safeValue(localStorage.getItem(GIST_ID_KEY) || "")}" autocomplete="off"></label><label>GitHub Personal Access Token<input id="gistToken" type="password" value="${safeValue(localStorage.getItem(GIST_TOKEN_KEY) || "")}" autocomplete="off"></label></div>
       <p class="settings-note">These credentials are stored only in this browser's localStorage. Do not commit a token to the repository. Each device needs its own credentials to read and save the shared Gist.</p>
       <div class="stack-actions">${button("Save credentials", "save-settings", "button button-primary")} ${button("Load saved data", "load-gist")}</div></section>`;
     document.body.append(modal);
   }
 
-  function closeSettings() { document.querySelector(".modal-backdrop")?.remove(); }
-
-  function saveSettings() {
-    const gistId = document.querySelector("#gistId").value.trim();
-    const token = document.querySelector("#gistToken").value.trim();
-    if (!gistId || !token) { setStatus("Both a Gist ID and Personal Access Token are required.", "error"); return; }
-    localStorage.setItem(GIST_ID_KEY, gistId);
-    localStorage.setItem(GIST_TOKEN_KEY, token);
-    closeSettings();
-    setStatus("Settings saved. Auto-loading data now...");
-    loadFromGist(); // Auto-trigger load as soon as new settings are saved
-  }
-
   function choosePhoto() { document.querySelector("#photoInput")?.click(); }
-
   function handlePhoto(file) {
     const allowedType = file && ["image/png", "image/jpeg"].includes(file.type);
     const allowedExtension = file && /\.(png|jpe?g)$/i.test(file.name);
     const note = document.querySelector("#photoNote");
-    if (!allowedType || !allowedExtension) { if (note) { note.textContent = "Only .png, .jpg, and .jpeg image files are accepted."; note.classList.add("error"); } return; }
+    if (!allowedType || !allowedExtension) { if (note) { note.textContent = "Only .png, .jpg, and .jpeg files accepted."; note.classList.add("error"); } return; }
     const reader = new FileReader();
     reader.onload = () => {
       const image = new Image();
@@ -566,14 +607,11 @@
   });
 
   document.addEventListener("mouseup", () => { if (selectionState.active) selectionState.active = false; });
-
   document.addEventListener("keydown", (event) => {
     const bounds = getSelectionBounds();
     const hasMultiSelection = bounds && (bounds.minRow !== bounds.maxRow || bounds.minCol !== bounds.maxCol);
     if (!hasMultiSelection) return;
-
     if (event.key === "Escape") { clearSelection(); return; }
-
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       const period = currentPeriod();
@@ -588,7 +626,6 @@
       }
       render();
       setStatus(`Cleared selected block.`);
-      return;
     }
   });
 
@@ -610,7 +647,7 @@
     }
     event.clipboardData.setData("text/plain", lines.join("\n"));
     event.preventDefault();
-    setStatus(`Copied ${bounds.maxRow - bounds.minRow + 1} rows × ${bounds.maxCol - bounds.minCol + 1} columns to clipboard.`);
+    setStatus(`Copied block to clipboard.`);
   });
 
   document.addEventListener("cut", (event) => {
@@ -630,45 +667,89 @@
       lines.push(rowVals.join("\t"));
     }
     event.clipboardData.setData("text/plain", lines.join("\n"));
-    event.preventDefault();
-    render();
-    setStatus(`Cut ${bounds.maxRow - bounds.minRow + 1} rows × ${bounds.maxCol - bounds.minCol + 1} columns.`);
+    event.preventDefault(); render();
+    setStatus(`Cut block.`);
   });
 
   document.addEventListener("click", (event) => {
     const target = event.target.closest("[data-action]");
     if (!target) return;
     const action = target.dataset.action;
+    
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
-      if (password === LOGIN_PASSWORD) { 
-        sessionStorage.setItem("cstr-class-record-login", "true"); 
+      if (ACCOUNTS.includes(password)) { 
+        currentUser = password;
+        sessionStorage.setItem("cstr-class-record-user", currentUser); 
+        state = normalizeState(currentGistData[currentUser], currentUser);
         render(); 
         if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
           loadFromGist(); 
         } else {
-          isDataLoaded = true; // No Gist configured yet, unlock for local drafting
-          syncSaveControl();
+          isDataLoaded = true; syncSaveControl();
         }
       }
-      else { error.textContent = "Incorrect password. Please try again."; error.classList.add("error"); }
+      else { error.textContent = "Incorrect teacher password. Please try again."; error.classList.add("error"); }
     }
-    if (action === "logout") { sessionStorage.removeItem("cstr-class-record-login"); currentView = "home"; render(); }
+    if (action === "logout") { sessionStorage.removeItem("cstr-class-record-user"); currentUser = null; state = null; currentView = "home"; render(); }
     if (action === "go-home") { currentView = "home"; render(); }
     if (action === "go-records") { currentView = "chooser"; render(); }
-    if (action === "select-group") { activeGroup = target.dataset.group; activeSectionId = registry.find((section) => section.group === activeGroup).id; activePeriodIndex = 0; currentView = "chooser"; render(); }
+    if (action === "select-group") { 
+      activeGroup = target.dataset.group; 
+      const filtered = state.registry.filter((section) => section.group === activeGroup);
+      activeSectionId = filtered.length ? filtered[0].id : null; 
+      activePeriodIndex = 0; currentView = "chooser"; render(); 
+    }
     if (action === "select-section") { activeSectionId = target.dataset.section; activeGroup = currentSection().group; activePeriodIndex = 0; currentView = "record"; render(); }
     if (action === "select-period") { activePeriodIndex = Number(target.dataset.period); render(); }
     if (action === "add-period") addPeriod();
     if (action === "save-changes") saveToGist();
     if (action === "open-settings") renderSettings();
-    if (action === "close-settings") closeSettings();
-    if (action === "save-settings") saveSettings();
-    if (action === "load-gist") { saveSettings(); loadFromGist(); }
+    if (action === "close-modal") document.querySelector(".modal-backdrop")?.remove();
+    if (action === "save-settings") {
+      localStorage.setItem(GIST_ID_KEY, document.querySelector("#gistId").value.trim());
+      localStorage.setItem(GIST_TOKEN_KEY, document.querySelector("#gistToken").value.trim());
+      document.querySelector(".modal-backdrop")?.remove(); setStatus("Settings saved. Auto-loading data now..."); loadFromGist();
+    }
+    if (action === "load-gist") { target.dataset.action = "save-settings"; target.click(); }
     if (action === "choose-photo") choosePhoto();
     if (action === "search-student") searchStudent();
-    if (action === "close-search") document.querySelector(".modal-backdrop")?.remove();
+    if (action === "add-class") showClassModal();
+    if (action === "edit-class") showClassModal(target.dataset.editId);
+    if (action === "start-onboarding") { document.querySelector(".modal-backdrop")?.remove(); showClassModal(); }
+    
+    // Class Form Submission Handler
+    if (action === "save-class-submit") {
+       const editId = target.dataset.editId;
+       const grade = document.querySelector("#classGrade").value;
+       const subjectName = document.querySelector("#classSubject").value.trim();
+       const sectionName = document.querySelector("#classSectionName").value.trim();
+       const color = document.querySelector("#classColor").value;
+
+       if (!subjectName || !sectionName) { setStatus("Subject and Section Name are required.", "error"); return; }
+
+       const combinedSubject = `${subjectName} - ${sectionName}`;
+       const assignedGroup = parseInt(grade.replace("Grade ", "")) >= 11 ? "SHS" : "JHS";
+
+       if (editId) {
+         const cls = state.registry.find(c => c.id === editId);
+         cls.level = grade;
+         cls.subject = combinedSubject;
+         cls.theme = color;
+         cls.accent = color;
+         cls.group = assignedGroup;
+       } else {
+         const newId = `c_${Date.now()}`;
+         const newClass = { id: newId, group: assignedGroup, level: grade, subject: combinedSubject, weights: [20, 50, 30], theme: color, accent: color, rosterSize: 42 };
+         state.registry.push(newClass);
+         state.sections[newId] = { periods: [initialPeriod(newClass)] };
+       }
+       document.querySelector(".modal-backdrop")?.remove();
+       activeGroup = assignedGroup; // Auto-shift tab view to the created class group
+       render();
+       setStatus(`Class ${editId ? 'updated' : 'added'} successfully.`);
+    }
   });
 
   document.addEventListener("keydown", (event) => {
@@ -677,24 +758,17 @@
 
   app.addEventListener("input", (event) => {
     const input = event.target;
+    if (input.dataset.overviewInput !== undefined) { state.teacherOverview = input.value; }
     if (input.dataset.nameRow !== undefined) { 
       const rowIndex = Number(input.dataset.nameRow);
       const learner = currentPeriod().roster[rowIndex];
       learner.name = input.value;
       const cat = getLearnerCategory(learner.name);
-      if (cat) {
-        learner.ww.fill("");
-        learner.pt.fill("");
-        learner.qa.fill("");
-        render();
-      } else {
+      if (cat) { learner.ww.fill(""); learner.pt.fill(""); learner.qa.fill(""); render(); } 
+      else {
         const rowEl = document.querySelector(`[data-learner-row="${rowIndex}"]`);
-        if (rowEl && rowEl.classList.contains("row-category")) {
-          render();
-        } else {
-          updateLiveSummary(rowIndex);
-          updateAllNumberingAndCounts();
-        }
+        if (rowEl && rowEl.classList.contains("row-category")) render();
+        else { updateLiveSummary(rowIndex); updateAllNumberingAndCounts(); }
       }
       adjustNameColumnWidth();
     }
@@ -713,14 +787,10 @@
     const section = currentSection();
     const period = currentPeriod();
     if (!Number.isFinite(startRow) || startCol === null) return;
-
     const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     while (lines.length && lines[lines.length - 1] === "") lines.pop();
     if (!lines.length) return;
-
-    let rowsFilled = 0;
-    let truncated = false;
-
+    let rowsFilled = 0, truncated = false;
     lines.forEach((line, lineOffset) => {
       const rowIndex = startRow + lineOffset;
       if (rowIndex >= section.rosterSize) { truncated = true; return; }
@@ -737,19 +807,9 @@
       });
       rowsFilled += 1;
     });
-
-    period.roster.forEach((l) => {
-      if (getLearnerCategory(l.name)) {
-        l.ww.fill("");
-        l.pt.fill("");
-        l.qa.fill("");
-      }
-    });
-
-    clearSelection();
-    render();
-    const overflowNote = truncated ? " Some pasted data went past the roster size or the last QA column and was left out." : "";
-    setStatus(`Bulk paste filled ${rowsFilled} row${rowsFilled === 1 ? "" : "s"}.${overflowNote}`);
+    period.roster.forEach((l) => { if (getLearnerCategory(l.name)) { l.ww.fill(""); l.pt.fill(""); l.qa.fill(""); } });
+    clearSelection(); render();
+    setStatus(`Bulk paste filled ${rowsFilled} row${rowsFilled === 1 ? "" : "s"}.${truncated ? " Some pasted data went past the roster size and was left out." : ""}`);
   }
 
   app.addEventListener("paste", (event) => {
@@ -759,27 +819,23 @@
     const text = (event.clipboardData || window.clipboardData).getData("text");
     if (!text || !/[\t\n\r]/.test(text)) return;
     event.preventDefault();
-
     const bounds = getSelectionBounds();
-    if (bounds) {
-      applyBulkPaste(bounds.minRow, bounds.minCol, text);
-    } else {
-      const coords = getCellCoords(target);
-      if (coords) applyBulkPaste(coords.row, coords.col, text);
-    }
+    if (bounds) applyBulkPaste(bounds.minRow, bounds.minCol, text);
+    else { const coords = getCellCoords(target); if (coords) applyBulkPaste(coords.row, coords.col, text); }
   });
 
   app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
   
-  // INITIALIZATION ENGINE: Automatically sync on startup or page refresh!
   function initApp() {
+    if (currentUser) {
+      state = normalizeState(currentGistData[currentUser] || null, currentUser);
+    }
     render();
-    if (sessionStorage.getItem("cstr-class-record-login") === "true") {
+    if (currentUser) {
       if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
-        loadFromGist(); // Auto-pull data immediately without requiring a button click
+        loadFromGist(); 
       } else {
-        isDataLoaded = true; // No Gist configured yet, unlock for local drafting
-        syncSaveControl();
+        isDataLoaded = true; syncSaveControl();
       }
     }
   }
