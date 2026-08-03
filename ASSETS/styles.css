@@ -444,3 +444,65 @@ h1, h2, h3, h4, h5, h6, .eyebrow, .app-title, .button, .tab, th, .level-card, .s
 @media (max-width: 680px) {
   .header-search { width: 100%; }.header-actions-wrap { width: 100%; }.level-grid { grid-template-columns: 1fr; }.level-card { min-height: 175px; }.section-card-grid { grid-template-columns: 1fr; }.record-table .name-cell, .compact-record .name-cell { min-width: 220px; width: 220px; }
 }
+
+/* =========================================================
+   NEW ACCOUNT & MODAL FIXES (APPEND TO BOTTOM OF FILE)
+   ========================================================= */
+
+/* Standardized Color Palette Sync */
+.accent-deep-red { --section-accent: #8B0000; }
+.accent-orange { --section-accent: #D35400; }
+.accent-yellow { --section-accent: #F1C40F; }
+.accent-purple { --section-accent: #8E44AD; }
+.accent-blue { --section-accent: #2980B9; }
+.accent-deep-green { --section-accent: #27AE60; }
+.accent-gray { --section-accent: #7F8C8D; }
+.accent-black { --section-accent: #2C3E50; }
+.accent-white { --section-accent: #BDC3C7; }
+
+.theme-deep-red[aria-selected="true"] { background: #8B0000 !important; border-color: #8B0000 !important; color: #fff !important; }
+.theme-orange[aria-selected="true"] { background: #D35400 !important; border-color: #D35400 !important; color: #fff !important; }
+.theme-yellow[aria-selected="true"] { background: #F1C40F !important; border-color: #F1C40F !important; color: #000 !important; }
+.theme-purple[aria-selected="true"] { background: #8E44AD !important; border-color: #8E44AD !important; color: #fff !important; }
+.theme-blue[aria-selected="true"] { background: #2980B9 !important; border-color: #2980B9 !important; color: #fff !important; }
+.theme-deep-green[aria-selected="true"] { background: #27AE60 !important; border-color: #27AE60 !important; color: #fff !important; }
+.theme-gray[aria-selected="true"] { background: #7F8C8D !important; border-color: #7F8C8D !important; color: #fff !important; }
+.theme-black[aria-selected="true"] { background: #2C3E50 !important; border-color: #2C3E50 !important; color: #fff !important; }
+.theme-white[aria-selected="true"] { background: #FFFFFF !important; border-color: #BDC3C7 !important; color: #2C3E50 !important; }
+
+/* Editable Teacher Profile Overview */
+.teacher-overview-input {
+  width: 100%;
+  min-height: 110px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  font-family: inherit;
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.6);
+  resize: vertical;
+  transition: border-color 0.2s, background 0.2s;
+}
+.teacher-overview-input:focus {
+  outline: none;
+  border-color: var(--blue);
+  border-style: solid;
+  background: #fff;
+}
+
+/* Modals & Layout Adjustments */
+.class-modal-form { display: grid; gap: 16px; margin-top: 20px; }
+.class-modal-form select { 
+  min-height: 44px; border: 1px solid var(--border); 
+  border-radius: 8px; padding: 8px 11px; background: #fff; font-family: inherit;
+}
+.section-card-actions { 
+  display: flex; gap: 8px; position: relative; z-index: 10; margin-top: auto; padding-top: 12px;
+}
+.section-card-actions button { 
+  flex: 1; padding: 6px; font-size: 0.8rem; background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-weight: 700;
+}
+.section-card-actions button:hover { background: #fff; border-color: var(--blue); color: var(--blue); }
