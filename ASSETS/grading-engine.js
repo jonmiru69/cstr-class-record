@@ -13,9 +13,6 @@
   const QA_INTRA_WEIGHTS = [0.30, 0.30, 0.40];
   const ATTENDANCE_CODES = ["A", "E", "L"];
 
-  // A = Absent, E = Excused, L = Late. These are valid cell entries that are
-  // deliberately excluded from both sides of the raw/HPS ratio, the same way
-  // a blank slot is excluded, so they never get silently scored as zero.
   function isAttendanceCode(value) {
     if (typeof value !== "string") return false;
     return ATTENDANCE_CODES.includes(value.trim().toUpperCase());
@@ -46,7 +43,6 @@
     rawScores.forEach((rawValue, index) => {
       const raw = numberOrNull(rawValue);
       const hps = numberOrNull(hpsScores[index]);
-      // An unfilled item is excluded from both sides of the ratio.
       if (raw === null || hps === null || hps <= 0) return;
       rawTotal += raw;
       hpsTotal += hps;
@@ -73,11 +69,14 @@
     let hpsTotal = 0;
     let used = 0;
 
-    QA_INTRA_WEIGHTS.forEach((intraWeight, index) => {
-      const raw = numberOrNull(rawScores[index]);
+    // REVISION: Iterate dynamically to allow adding/removing QA columns securely.
+    rawScores.forEach((rawValue, index) => {
+      const raw = numberOrNull(rawValue);
       const hps = numberOrNull(hpsScores[index]);
-      // A blank QA slot is excluded, then the active fixed weights are normalized.
       if (raw === null || hps === null || hps <= 0) return;
+      
+      const intraWeight = index < QA_INTRA_WEIGHTS.length ? QA_INTRA_WEIGHTS[index] : (1 / rawScores.length);
+      
       weightedPercentage += ((raw / hps) * 100) * intraWeight;
       activeIntraWeight += intraWeight;
       rawTotal += raw;
@@ -94,8 +93,12 @@
 
   function calculateInitialGrade(writtenWork, performanceTask, quarterlyAssessment) {
     const parts = [writtenWork.weighted, performanceTask.weighted, quarterlyAssessment.weighted];
-    if (parts.some((value) => !Number.isFinite(value))) return { precise: null, rounded: null };
-    const precise = parts.reduce((sum, value) => sum + value, 0);
+    
+    // REVISION 1: Calculates running Initial Grade in real-time even if a component is fully empty.
+    const hasData = parts.some((value) => Number.isFinite(value));
+    if (!hasData) return { precise: null, rounded: null };
+    
+    const precise = parts.reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
     return { precise, rounded: roundHalfUp(precise, FINAL_GRADE_DECIMALS) };
   }
 
