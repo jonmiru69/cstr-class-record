@@ -3,7 +3,6 @@
 
   const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode } = window.CSTRGrading;
   
-  // Authentication & Multi-Tenant Setup
   const ACCOUNTS = ["harty342002", "maamsamcstr1234"];
   let currentUser = sessionStorage.getItem("cstr-class-record-user") || null;
   let currentGistData = {}; 
@@ -12,7 +11,6 @@
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
 
-  // Standardized Default Dataset (Only loaded for harty342002 on a fresh start)
   const DEFAULT_REGISTRY_HARTY = [
     { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
     { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "deep-green", accent: "deep-green", rosterSize: 42 },
@@ -27,15 +25,14 @@
   let activeGroup = "JHS";
   let activeSectionId = null;
   let activePeriodIndex = 0;
-  let state = null; // Points to currentGistData[currentUser]
+  let state = null; 
 
-  // Security & Sync Interlocks
   let isDataLoaded = false;
   let isLoading = false;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
 
-  function emptyRoster(size) {
-    return Array.from({ length: size }, () => ({ name: "", ww: Array(10).fill(""), pt: Array(8).fill(""), qa: Array(3).fill("") }));
+  function emptyRoster(size, wwLen = 10, ptLen = 8, qaLen = 3) {
+    return Array.from({ length: size }, () => ({ name: "", ww: Array(wwLen).fill(""), pt: Array(ptLen).fill(""), qa: Array(qaLen).fill("") }));
   }
 
   function initialPeriod(section) {
@@ -78,24 +75,30 @@
       const loaded = saved.sections && saved.sections[section.id];
       if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) return;
       base.sections[section.id] = {
-        periods: loaded.periods.map((period) => ({
-          name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
-          wwDates: fitArray(period.wwDates, 10),
-          ptDates: fitArray(period.ptDates, 8),
-          qaDates: fitArray(period.qaDates, 3),
-          wwHps: fitArray(period.wwHps, 10),
-          ptHps: fitArray(period.ptHps, 8),
-          qaHps: fitArray(period.qaHps, 3),
-          roster: Array.from({ length: section.rosterSize }, (_, index) => {
-            const learner = Array.isArray(period.roster) ? period.roster[index] : null;
-            return {
-              name: learner && typeof learner.name === "string" ? learner.name : "",
-              ww: fitArray(learner && learner.ww, 10),
-              pt: fitArray(learner && learner.pt, 8),
-              qa: fitArray(learner && learner.qa, 3)
-            };
-          })
-        }))
+        periods: loaded.periods.map((period) => {
+          const wwLen = Array.isArray(period.wwDates) ? period.wwDates.length : 10;
+          const ptLen = Array.isArray(period.ptDates) ? period.ptDates.length : 8;
+          const qaLen = Array.isArray(period.qaDates) ? period.qaDates.length : 3;
+
+          return {
+            name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
+            wwDates: fitArray(period.wwDates, wwLen),
+            ptDates: fitArray(period.ptDates, ptLen),
+            qaDates: fitArray(period.qaDates, qaLen),
+            wwHps: fitArray(period.wwHps, wwLen),
+            ptHps: fitArray(period.ptHps, ptLen),
+            qaHps: fitArray(period.qaHps, qaLen),
+            roster: Array.from({ length: section.rosterSize }, (_, index) => {
+              const learner = Array.isArray(period.roster) ? period.roster[index] : null;
+              return {
+                name: learner && typeof learner.name === "string" ? learner.name : "",
+                ww: fitArray(learner && learner.ww, wwLen),
+                pt: fitArray(learner && learner.pt, ptLen),
+                qa: fitArray(learner && learner.qa, qaLen)
+              };
+            })
+          };
+        })
       };
     });
     return base;
@@ -304,6 +307,10 @@
   }
 
   function renderRecordTable(section, period) {
+    const wwLen = period.wwHps.length;
+    const ptLen = period.ptHps.length;
+    const qaLen = period.qaHps.length;
+
     const dateHeaders = (kind, values, labels = []) => values.map((value, index) => {
       const label = labels[index] ? `<span>${labels[index]}</span>` : "";
       const borderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
@@ -315,10 +322,17 @@
     }).join("");
     const { numbering } = computeLearnerNumbering(period.roster);
     const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section, numbering[rowIndex])).join("");
+    
+    const qaLabels = period.qaDates.map((_, i) => i === 0 ? "ST 1" : i === 1 ? "ST 2" : i === 2 ? "Term Exam" : `QA ${i+1}`);
+
     return `<div class="table-wrap"><table class="record-table compact-record"><thead>
-      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="13">Written Works (${section.weights[0]}%)</th><th class="component-header component-pt border-start-pt" scope="colgroup" colspan="11">Performance Tasks (${section.weights[1]}%)</th><th class="component-header component-qa border-start-qa" scope="colgroup" colspan="6">Quarterly Assessment (${section.weights[2]}%)</th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
-      <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>${dateHeaders("qa", period.qaDates, ["ST 1 (30%)", "ST 2 (30%)", "Term Exam (40%)"])}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th></tr>
-      <tr class="hps-row"><th colspan="10" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="8" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="3" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
+      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th>
+      <th class="component-header component-ww" scope="colgroup" colspan="${wwLen + 3}">Written Works (${section.weights[0]}%)<button class="col-btn" data-action="add-col" data-kind="ww" title="Add Column">+</button><button class="col-btn" data-action="del-col" data-kind="ww" title="Remove Column">-</button></th>
+      <th class="component-header component-pt border-start-pt" scope="colgroup" colspan="${ptLen + 3}">Performance Tasks (${section.weights[1]}%)<button class="col-btn" data-action="add-col" data-kind="pt" title="Add Column">+</button><button class="col-btn" data-action="del-col" data-kind="pt" title="Remove Column">-</button></th>
+      <th class="component-header component-qa border-start-qa" scope="colgroup" colspan="${qaLen + 3}">Quarterly Assessment (${section.weights[2]}%)<button class="col-btn" data-action="add-col" data-kind="qa" title="Add Column">+</button><button class="col-btn" data-action="del-col" data-kind="qa" title="Remove Column">-</button></th>
+      <th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
+      <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>${dateHeaders("qa", period.qaDates, qaLabels)}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th></tr>
+      <tr class="hps-row"><th colspan="${wwLen}" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="${ptLen}" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="${qaLen}" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
       <tr class="hps-input-row"><th colspan="2" scope="row">Enter HPS</th>${hpsInputs("ww", period.wwHps)}<td colspan="3">&nbsp;</td>${hpsInputs("pt", period.ptHps)}<td colspan="3">&nbsp;</td>${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td>&nbsp;</td></tr>
       </thead><tbody>${rows}</tbody></table></div>`;
   }
@@ -461,7 +475,7 @@
 
     setStatus("Saving...", "saving");
     try {
-      currentGistData[currentUser] = state; // Isolate saving specifically for active user
+      currentGistData[currentUser] = state; 
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
         method: "PATCH",
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
@@ -492,7 +506,6 @@
       const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : file.content;
       
       const parsedData = JSON.parse(content || "{}");
-      // Handle legacy root structure by wrapping into harty342002
       if (parsedData.version && !parsedData["harty342002"]) {
         currentGistData = { "harty342002": parsedData };
       } else {
@@ -543,12 +556,14 @@
     reader.readAsDataURL(file);
   }
 
-  const FIELD_ORDER_LENGTH = 22;
   function fieldStartColumn(target) {
     if (target.dataset.nameRow !== undefined) return 0;
+    const period = currentPeriod();
+    const wwLen = period.wwHps.length;
+    const ptLen = period.ptHps.length;
     if (target.dataset.score === "ww") return 1 + Number(target.dataset.index);
-    if (target.dataset.score === "pt") return 11 + Number(target.dataset.index);
-    if (target.dataset.score === "qa") return 19 + Number(target.dataset.index);
+    if (target.dataset.score === "pt") return 1 + wwLen + Number(target.dataset.index);
+    if (target.dataset.score === "qa") return 1 + wwLen + ptLen + Number(target.dataset.index);
     return null;
   }
 
@@ -615,13 +630,14 @@
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       const period = currentPeriod();
+      const wwLen = period.wwHps.length, ptLen = period.ptHps.length, qaLen = period.qaHps.length;
       for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
         const l = period.roster[r];
         for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
           if (c === 0) l.name = "";
-          else if (c <= 10) l.ww[c - 1] = "";
-          else if (c <= 18) l.pt[c - 11] = "";
-          else if (c <= 21) l.qa[c - 19] = "";
+          else if (c <= wwLen) l.ww[c - 1] = "";
+          else if (c <= wwLen + ptLen) l.pt[c - 1 - wwLen] = "";
+          else if (c <= wwLen + ptLen + qaLen) l.qa[c - 1 - wwLen - ptLen] = "";
         }
       }
       render();
@@ -633,15 +649,16 @@
     const bounds = getSelectionBounds();
     if (!bounds || (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol && document.activeElement.tagName === "INPUT")) return;
     const period = currentPeriod();
+    const wwLen = period.wwHps.length, ptLen = period.ptHps.length, qaLen = period.qaHps.length;
     const lines = [];
     for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
       const rowVals = [];
       const l = period.roster[r];
       for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
         if (c === 0) rowVals.push(l.name || "");
-        else if (c <= 10) rowVals.push(l.ww[c - 1] || "");
-        else if (c <= 18) rowVals.push(l.pt[c - 11] || "");
-        else if (c <= 21) rowVals.push(l.qa[c - 19] || "");
+        else if (c <= wwLen) rowVals.push(l.ww[c - 1] || "");
+        else if (c <= wwLen + ptLen) rowVals.push(l.pt[c - 1 - wwLen] || "");
+        else if (c <= wwLen + ptLen + qaLen) rowVals.push(l.qa[c - 1 - wwLen - ptLen] || "");
       }
       lines.push(rowVals.join("\t"));
     }
@@ -654,15 +671,16 @@
     const bounds = getSelectionBounds();
     if (!bounds || (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol && document.activeElement.tagName === "INPUT")) return;
     const period = currentPeriod();
+    const wwLen = period.wwHps.length, ptLen = period.ptHps.length, qaLen = period.qaHps.length;
     const lines = [];
     for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
       const rowVals = [];
       const l = period.roster[r];
       for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
         if (c === 0) { rowVals.push(l.name || ""); l.name = ""; }
-        else if (c <= 10) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
-        else if (c <= 18) { rowVals.push(l.pt[c - 11] || ""); l.pt[c - 11] = ""; }
-        else if (c <= 21) { rowVals.push(l.qa[c - 19] || ""); l.qa[c - 19] = ""; }
+        else if (c <= wwLen) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
+        else if (c <= wwLen + ptLen) { rowVals.push(l.pt[c - 1 - wwLen] || ""); l.pt[c - 1 - wwLen] = ""; }
+        else if (c <= wwLen + ptLen + qaLen) { rowVals.push(l.qa[c - 1 - wwLen - ptLen] || ""); l.qa[c - 1 - wwLen - ptLen] = ""; }
       }
       lines.push(rowVals.join("\t"));
     }
@@ -676,6 +694,28 @@
     if (!target) return;
     const action = target.dataset.action;
     
+    // Feature 2 Revisions: Allowing User to Dynamically ADD or DELETE Columns
+    if (action === "add-col") {
+      const kind = target.dataset.kind;
+      const period = currentPeriod();
+      period[`${kind}Dates`].push("");
+      period[`${kind}Hps`].push("");
+      period.roster.forEach(l => l[kind].push(""));
+      render();
+    }
+    if (action === "del-col") {
+      const kind = target.dataset.kind;
+      const period = currentPeriod();
+      if (period[`${kind}Dates`].length > 1) {
+        period[`${kind}Dates`].pop();
+        period[`${kind}Hps`].pop();
+        period.roster.forEach(l => l[kind].pop());
+        render();
+      } else {
+        setStatus("Cannot remove the last column. At least 1 is required.", "error");
+      }
+    }
+
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
@@ -719,7 +759,6 @@
     if (action === "edit-class") showClassModal(target.dataset.editId);
     if (action === "start-onboarding") { document.querySelector(".modal-backdrop")?.remove(); showClassModal(); }
     
-    // Class Form Submission Handler
     if (action === "save-class-submit") {
        const editId = target.dataset.editId;
        const grade = document.querySelector("#classGrade").value;
@@ -746,7 +785,7 @@
          state.sections[newId] = { periods: [initialPeriod(newClass)] };
        }
        document.querySelector(".modal-backdrop")?.remove();
-       activeGroup = assignedGroup; // Auto-shift tab view to the created class group
+       activeGroup = assignedGroup;
        render();
        setStatus(`Class ${editId ? 'updated' : 'added'} successfully.`);
     }
@@ -786,27 +825,34 @@
   function applyBulkPaste(startRow, startCol, text) {
     const section = currentSection();
     const period = currentPeriod();
+    const wwLen = period.wwHps.length, ptLen = period.ptHps.length, qaLen = period.qaHps.length;
+    const FIELD_ORDER_LENGTH = 1 + wwLen + ptLen + qaLen;
+
     if (!Number.isFinite(startRow) || startCol === null) return;
     const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     while (lines.length && lines[lines.length - 1] === "") lines.pop();
     if (!lines.length) return;
+    
     let rowsFilled = 0, truncated = false;
     lines.forEach((line, lineOffset) => {
       const rowIndex = startRow + lineOffset;
       if (rowIndex >= section.rosterSize) { truncated = true; return; }
       const learner = period.roster[rowIndex];
       const cells = line.split("\t");
+      
       cells.forEach((cellValue, cellOffset) => {
         const column = startCol + cellOffset;
         if (column >= FIELD_ORDER_LENGTH) { truncated = true; return; }
         const value = cellValue.trim();
+        
         if (column === 0) { learner.name = value; return; }
-        if (column <= 10) { learner.ww[column - 1] = sanitizeScoreValue(value); return; }
-        if (column <= 18) { learner.pt[column - 11] = sanitizeScoreValue(value); return; }
-        learner.qa[column - 19] = sanitizeScoreValue(value);
+        if (column <= wwLen) { learner.ww[column - 1] = sanitizeScoreValue(value); return; }
+        if (column <= wwLen + ptLen) { learner.pt[column - 1 - wwLen] = sanitizeScoreValue(value); return; }
+        learner.qa[column - 1 - wwLen - ptLen] = sanitizeScoreValue(value);
       });
       rowsFilled += 1;
     });
+    
     period.roster.forEach((l) => { if (getLearnerCategory(l.name)) { l.ww.fill(""); l.pt.fill(""); l.qa.fill(""); } });
     clearSelection(); render();
     setStatus(`Bulk paste filled ${rowsFilled} row${rowsFilled === 1 ? "" : "s"}.${truncated ? " Some pasted data went past the roster size and was left out." : ""}`);
