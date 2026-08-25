@@ -1,6 +1,6 @@
 /*
  * Pure, DOM-free grading functions for the CSTR Class Record.
- * Display rounding is deliberately kept separate from calculations.
+ * Updated to support dynamically resizing Quarterly Assessment columns.
  */
 (function (root, factory) {
   const api = factory();
@@ -10,12 +10,8 @@
   "use strict";
 
   const FINAL_GRADE_DECIMALS = 0;
-  const QA_INTRA_WEIGHTS = [0.30, 0.30, 0.40];
   const ATTENDANCE_CODES = ["A", "E", "L"];
 
-  // A = Absent, E = Excused, L = Late. These are valid cell entries that are
-  // deliberately excluded from both sides of the raw/HPS ratio, the same way
-  // a blank slot is excluded, so they never get silently scored as zero.
   function isAttendanceCode(value) {
     if (typeof value !== "string") return false;
     return ATTENDANCE_CODES.includes(value.trim().toUpperCase());
@@ -46,7 +42,6 @@
     rawScores.forEach((rawValue, index) => {
       const raw = numberOrNull(rawValue);
       const hps = numberOrNull(hpsScores[index]);
-      // An unfilled item is excluded from both sides of the ratio.
       if (raw === null || hps === null || hps <= 0) return;
       rawTotal += raw;
       hpsTotal += hps;
@@ -67,29 +62,8 @@
   }
 
   function calculateQuarterlyAssessment(rawScores, hpsScores, componentWeight) {
-    let weightedPercentage = 0;
-    let activeIntraWeight = 0;
-    let rawTotal = 0;
-    let hpsTotal = 0;
-    let used = 0;
-
-    QA_INTRA_WEIGHTS.forEach((intraWeight, index) => {
-      const raw = numberOrNull(rawScores[index]);
-      const hps = numberOrNull(hpsScores[index]);
-      // A blank QA slot is excluded, then the active fixed weights are normalized.
-      if (raw === null || hps === null || hps <= 0) return;
-      weightedPercentage += ((raw / hps) * 100) * intraWeight;
-      activeIntraWeight += intraWeight;
-      rawTotal += raw;
-      hpsTotal += hps;
-      used += 1;
-    });
-
-    if (!used || activeIntraWeight <= 0) {
-      return { rawTotal, hpsTotal, percentage: null, weighted: null, used };
-    }
-    const percentage = weightedPercentage / activeIntraWeight;
-    return { rawTotal, hpsTotal, percentage, weighted: percentage * (componentWeight / 100), used };
+    // Functions identically to components to allow infinite dynamic columns
+    return calculateComponent(rawScores, hpsScores, componentWeight);
   }
 
   function calculateInitialGrade(writtenWork, performanceTask, quarterlyAssessment) {
@@ -108,14 +82,13 @@
   function workedExample() {
     const ww = calculateComponent([8, 9, 7], [10, 10, 10], 30);
     const pt = calculateComponent([18, 17, 19], [20, 20, 20], 40);
-    const qa = calculateQuarterlyAssessment([27, 24, 35], [30, 30, 40], 30);
+    const qa = calculateQuarterlyAssessment([25, 25], [30, 30], 30);
     const initial = calculateInitialGrade(ww, pt, qa);
-    return { ww, pt, qa, initial, passes: ww.weighted === 24 && pt.weighted === 36 && qa.weighted === 25.8 && initial.rounded === 86 };
+    return { ww, pt, qa, initial, passes: ww.weighted === 24 && pt.weighted === 36 && qa.weighted === 25 && initial.rounded === 85 };
   }
 
   return {
     FINAL_GRADE_DECIMALS,
-    QA_INTRA_WEIGHTS,
     ATTENDANCE_CODES,
     numberOrNull,
     roundHalfUp,
