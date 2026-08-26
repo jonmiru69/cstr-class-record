@@ -197,13 +197,35 @@ h3 { font-size: 1.05rem; margin-bottom: 8px; }
 .silhouette::before { content: ""; position: absolute; width: 50px; height: 50px; border-radius: 50%; background: var(--border); left: 4px; top: -53px; }
 .photo-caption { position: absolute; bottom: 12px; width: 100%; text-align: center; font-size: .78rem; color: var(--muted); background: var(--base); padding: 3px; }
 .teacher-block { border-left: 4px solid var(--gold); padding-left: 20px; }
-.teacher-name { font-size: clamp(1.3rem, 2.6vw, 1.7rem); line-height: 1.2; margin: 0 0 4px; color: var(--text); }
-.teacher-role { margin: 0 0 18px; color: var(--muted); font-weight: 600; font-size: .95rem; }
+.teacher-name-input {
+  display: block; width: 100%; box-sizing: border-box;
+  border: none; border-bottom: 1.5px solid var(--border); background: transparent;
+  font-family: 'Sora', 'Inter', system-ui, sans-serif; font-weight: 700;
+  font-size: clamp(1.3rem, 2.6vw, 1.7rem); color: var(--text);
+  padding: 2px 2px 8px; margin: 0 0 18px;
+}
+.teacher-name-input:hover { border-bottom-color: var(--gold-deep); }
+.teacher-name-input:focus { outline: none; border-bottom-color: var(--gold-deep); box-shadow: 0 2px 0 0 var(--gold-deep); }
 .teacher-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px 24px; margin: 0 0 18px; padding: 16px 18px; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .teacher-meta div { min-width: 0; }
-.teacher-meta dt { margin: 0; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-.teacher-meta dd { margin: 4px 0 0; color: var(--text); font-weight: 700; font-size: 1rem; }
-.teacher-bio { margin: 0; line-height: 1.65; font-size: 1.02rem; color: var(--text); }
+.teacher-meta dt { margin: 0 0 6px; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.teacher-meta dd { margin: 0; }
+.teacher-meta-input {
+  width: 100%; box-sizing: border-box; border: none; border-bottom: 1.5px solid var(--border);
+  background: transparent; padding: 2px 2px 5px; font-weight: 700; font-size: 1rem;
+  color: var(--text); font-family: inherit;
+}
+select.teacher-meta-input { cursor: pointer; -webkit-appearance: menulist; appearance: menulist; }
+.teacher-meta-input:hover { border-bottom-color: var(--gold-deep); }
+.teacher-meta-input:focus { outline: none; border-bottom-color: var(--gold-deep); }
+.teacher-bio-input {
+  display: block; width: 100%; box-sizing: border-box; min-height: 80px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  background: #fff; line-height: 1.65; font-size: 1.02rem; color: var(--text); font-family: inherit;
+}
+.teacher-bio-input:hover { border-color: var(--gold-deep); }
+.teacher-bio-input:focus { outline: none; border-color: var(--gold-deep); box-shadow: 0 0 0 3px rgba(212, 175, 55, .18); }
+.teacher-edit-hint { margin: 10px 0 0; color: var(--muted); font-size: .82rem; }
 .home-cta { margin-top: 24px; }
 
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 28px 0 16px; }
