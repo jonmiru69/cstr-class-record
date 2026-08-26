@@ -13,9 +13,6 @@
   const QA_INTRA_WEIGHTS = [0.30, 0.30, 0.40];
   const ATTENDANCE_CODES = ["A", "E", "L"];
 
-  // A = Absent, E = Excused, L = Late. These are valid cell entries that are
-  // deliberately excluded from both sides of the raw/HPS ratio, the same way
-  // a blank slot is excluded, so they never get silently scored as zero.
   function isAttendanceCode(value) {
     if (typeof value !== "string") return false;
     return ATTENDANCE_CODES.includes(value.trim().toUpperCase());
@@ -46,7 +43,6 @@
     rawScores.forEach((rawValue, index) => {
       const raw = numberOrNull(rawValue);
       const hps = numberOrNull(hpsScores[index]);
-      // An unfilled item is excluded from both sides of the ratio.
       if (raw === null || hps === null || hps <= 0) return;
       rawTotal += raw;
       hpsTotal += hps;
@@ -66,30 +62,35 @@
     };
   }
 
+  // Revision 1 Support: Falls back to component normalization if the column size changes from 3.
   function calculateQuarterlyAssessment(rawScores, hpsScores, componentWeight) {
-    let weightedPercentage = 0;
-    let activeIntraWeight = 0;
-    let rawTotal = 0;
-    let hpsTotal = 0;
-    let used = 0;
+    if (rawScores.length === 3) {
+      let weightedPercentage = 0;
+      let activeIntraWeight = 0;
+      let rawTotal = 0;
+      let hpsTotal = 0;
+      let used = 0;
 
-    QA_INTRA_WEIGHTS.forEach((intraWeight, index) => {
-      const raw = numberOrNull(rawScores[index]);
-      const hps = numberOrNull(hpsScores[index]);
-      // A blank QA slot is excluded, then the active fixed weights are normalized.
-      if (raw === null || hps === null || hps <= 0) return;
-      weightedPercentage += ((raw / hps) * 100) * intraWeight;
-      activeIntraWeight += intraWeight;
-      rawTotal += raw;
-      hpsTotal += hps;
-      used += 1;
-    });
+      QA_INTRA_WEIGHTS.forEach((intraWeight, index) => {
+        const raw = numberOrNull(rawScores[index]);
+        const hps = numberOrNull(hpsScores[index]);
+        if (raw === null || hps === null || hps <= 0) return;
+        weightedPercentage += ((raw / hps) * 100) * intraWeight;
+        activeIntraWeight += intraWeight;
+        rawTotal += raw;
+        hpsTotal += hps;
+        used += 1;
+      });
 
-    if (!used || activeIntraWeight <= 0) {
-      return { rawTotal, hpsTotal, percentage: null, weighted: null, used };
+      if (!used || activeIntraWeight <= 0) {
+        return { rawTotal, hpsTotal, percentage: null, weighted: null, used };
+      }
+      const percentage = weightedPercentage / activeIntraWeight;
+      return { rawTotal, hpsTotal, percentage, weighted: percentage * (componentWeight / 100), used };
     }
-    const percentage = weightedPercentage / activeIntraWeight;
-    return { rawTotal, hpsTotal, percentage, weighted: percentage * (componentWeight / 100), used };
+    
+    // Dynamic array calculation equivalent if length dynamically diverges from precisely 3:
+    return calculateComponent(rawScores, hpsScores, componentWeight);
   }
 
   function calculateInitialGrade(writtenWork, performanceTask, quarterlyAssessment) {
