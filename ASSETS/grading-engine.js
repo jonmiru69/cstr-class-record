@@ -13,12 +13,20 @@
   const QA_INTRA_WEIGHTS = [0.30, 0.30, 0.40];
   const ATTENDANCE_CODES = ["A", "E", "L"];
 
-  // A = Absent, E = Excused, L = Late. These are valid cell entries that are
-  // deliberately excluded from both sides of the raw/HPS ratio, the same way
-  // a blank slot is excluded, so they never get silently scored as zero.
   function isAttendanceCode(value) {
     if (typeof value !== "string") return false;
     return ATTENDANCE_CODES.includes(value.trim().toUpperCase());
+  }
+
+  function isAbsentCode(value) {
+    if (typeof value !== "string") return false;
+    return value.trim().toUpperCase() === "A";
+  }
+
+  function isExcusedOrLateCode(value) {
+    if (typeof value !== "string") return false;
+    const code = value.trim().toUpperCase();
+    return code === "E" || code === "L";
   }
 
   function numberOrNull(value) {
@@ -44,9 +52,18 @@
     let used = 0;
 
     rawScores.forEach((rawValue, index) => {
-      const raw = numberOrNull(rawValue);
       const hps = numberOrNull(hpsScores[index]);
-      // An unfilled item is excluded from both sides of the ratio.
+
+      if (isAbsentCode(rawValue)) {
+        if (hps === null || hps <= 0) return;
+        hpsTotal += hps;
+        used += 1;
+        return;
+      }
+
+      if (isExcusedOrLateCode(rawValue)) return;
+
+      const raw = numberOrNull(rawValue);
       if (raw === null || hps === null || hps <= 0) return;
       rawTotal += raw;
       hpsTotal += hps;
@@ -66,17 +83,30 @@
     };
   }
 
-  function calculateQuarterlyAssessment(rawScores, hpsScores, componentWeight) {
+  function calculateQuarterlyAssessment(rawScores, hpsScores, componentWeight, intraWeights = QA_INTRA_WEIGHTS) {
     let weightedPercentage = 0;
     let activeIntraWeight = 0;
     let rawTotal = 0;
     let hpsTotal = 0;
     let used = 0;
 
-    QA_INTRA_WEIGHTS.forEach((intraWeight, index) => {
-      const raw = numberOrNull(rawScores[index]);
+    rawScores.forEach((rawValue, index) => {
       const hps = numberOrNull(hpsScores[index]);
-      // A blank QA slot is excluded, then the active fixed weights are normalized.
+      
+      // Dynamic fallback allocation to prevent data wipe limits
+      const intraWeight = intraWeights[index] !== undefined ? intraWeights[index] : (1 / rawScores.length);
+
+      if (isAbsentCode(rawValue)) {
+        if (hps === null || hps <= 0) return;
+        activeIntraWeight += intraWeight; 
+        hpsTotal += hps;
+        used += 1;
+        return;
+      }
+
+      if (isExcusedOrLateCode(rawValue)) return;
+
+      const raw = numberOrNull(rawValue);
       if (raw === null || hps === null || hps <= 0) return;
       weightedPercentage += ((raw / hps) * 100) * intraWeight;
       activeIntraWeight += intraWeight;
@@ -113,6 +143,12 @@
     return { ww, pt, qa, initial, passes: ww.weighted === 24 && pt.weighted === 36 && qa.weighted === 25.8 && initial.rounded === 86 };
   }
 
+  function workedExampleAttendance() {
+    const ww = calculateComponent([8, "A", "E"], [10, 10, 10], 20);
+    const passes = ww.rawTotal === 8 && ww.hpsTotal === 20 && ww.used === 2 && ww.percentage === 40 && ww.weighted === 8;
+    return { ww, passes };
+  }
+
   return {
     FINAL_GRADE_DECIMALS,
     QA_INTRA_WEIGHTS,
@@ -125,6 +161,9 @@
     calculateInitialGrade,
     hasRawAboveHps,
     isAttendanceCode,
-    workedExample
+    isAbsentCode,
+    isExcusedOrLateCode,
+    workedExample,
+    workedExampleAttendance
   };
 });
