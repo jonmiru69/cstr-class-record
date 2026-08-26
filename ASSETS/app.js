@@ -9,13 +9,13 @@
   const app = document.querySelector("#app");
 
   const DEFAULT_REGISTRY = [
-    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
-    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
-    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science - Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
-    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III - Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42 },
-    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42 },
-    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42 },
-    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42 }
+    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
+    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
+    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
+    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III", section: "Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42 },
+    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42 },
+    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42 },
+    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42 }
   ];
 
   let currentView = "home";
@@ -61,6 +61,20 @@
     };
   }
 
+  function ensureSectionField(entry) {
+    if (typeof entry.section !== "string") {
+      const subj = String(entry.subject || "");
+      const marker = subj.indexOf(" - ");
+      if (marker !== -1) {
+        entry.section = subj.slice(marker + 3).trim();
+        entry.subject = subj.slice(0, marker).trim();
+      } else {
+        entry.section = "";
+      }
+    }
+    return entry;
+  }
+
   function normalizeState(saved) {
     const base = createInitialState();
     if (!saved || typeof saved !== "object") return base;
@@ -70,6 +84,7 @@
     if (Array.isArray(saved.registry) && saved.registry.length > 0) {
       base.registry = JSON.parse(JSON.stringify(saved.registry));
     }
+    base.registry.forEach(ensureSectionField);
 
     base.registry.forEach((section) => {
       const loaded = saved.sections && saved.sections[section.id];
@@ -238,13 +253,16 @@
           <p class="eyebrow" style="margin: 0;">Class record owner</p>
           <button type="button" class="kebab-btn" data-action="open-edit-teacher" aria-label="Edit Teacher" style="border: none; background: transparent; font-size: 1.5rem; cursor: pointer; color: var(--text);">⋮</button>
         </div>
-        <p class="teacher-block" style="font-size: 1.05rem; line-height: 1.6;">
-          <strong><em>Name: ${escapeHtml(state.teacher.name)}</em></strong><br>
-          <strong><em>Age: ${escapeHtml(state.teacher.age)}</em></strong><br>
-          <strong><em>Specialization: ${escapeHtml(state.teacher.specialization)}</em></strong><br>
-          <strong><em>Level: ${escapeHtml(state.teacher.level)}</em></strong><br><br>
-          <strong><em>${escapeHtml(state.teacher.bio)}</em></strong>
-        </p>
+        <div class="teacher-block">
+          <h2 class="teacher-name">${escapeHtml(state.teacher.name)}</h2>
+          <p class="teacher-role">${escapeHtml(state.teacher.specialization)} &bull; ${escapeHtml(state.teacher.level)} Level</p>
+          <dl class="teacher-meta">
+            <div><dt>Age</dt><dd>${escapeHtml(state.teacher.age)}</dd></div>
+            <div><dt>Specialization</dt><dd>${escapeHtml(state.teacher.specialization)}</dd></div>
+            <div><dt>School Level</dt><dd>${escapeHtml(state.teacher.level)}</dd></div>
+          </dl>
+          <p class="teacher-bio">${escapeHtml(state.teacher.bio)}</p>
+        </div>
         <div class="home-cta">${button("Proceed to Class Record →", "go-records", "button button-primary")}</div>
         <p id="photoNote" class="form-note">Photo uploads accept PNG and JPEG files only.</p>
       </div></section>`;
@@ -258,7 +276,7 @@
     const sectionCards = sections.map((section) => `
       <div class="section-card-wrap" style="position: relative;">
         <button type="button" class="kebab-btn" data-action="open-edit-section" data-section="${section.id}" aria-label="Edit Section" style="position: absolute; top: 12px; right: 12px; z-index: 10; border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">⋮</button>
-        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}" style="width: 100%;"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>
+        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}" style="width: 100%;"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong>${section.section ? `<em class="section-card-section">${escapeHtml(section.section)}</em>` : ""}<small>Open grade sheet</small></button>
       </div>`).join("");
       
     return `<section class="record-chooser">
@@ -287,6 +305,7 @@
     return `<div class="record-section"><div class="record-back">${button("← Back to sections", "go-records")}</div>
       <div class="section-heading"><div>
         <div class="section-title-wrap"><h2>${escapeHtml(section.subject)}</h2><span id="liveLearnerCount" class="learner-count-badge">${totalLearners} Learner${totalLearners === 1 ? "" : "s"}</span></div>
+        ${section.section ? `<p class="section-subtitle">${escapeHtml(section.section)}</p>` : ""}
         <div class="record-meta"><span><strong>${section.level}</strong></span><span>Weights: <strong>${section.weights.join(" / ")}</strong></span><span>Roster capacity: <strong>${section.rosterSize}</strong></span></div>
       </div></div>
       <div class="period-tabs" aria-label="Grading period tabs">${periodTabs}</div>
@@ -429,7 +448,7 @@
       });
     }));
     if (!matches.length) { showSearchModal("No exact student-name match was found. Please check the complete name and try again."); return; }
-    const cards = matches.map(({ section, period, learner, result, finalized }) => `<article class="student-grade-result"><p class="eyebrow">${escapeHtml(section.level)} &bull; ${escapeHtml(period.name)}</p><h3>${escapeHtml(learner.name)}</h3><p class="student-subject">${escapeHtml(section.subject)}</p>${finalized ? `<p class="student-grade-label">Initial Grade</p><p class="student-grade">${format(result.initial.rounded, 0)}</p>` : `<p class="grade-pending">Grades are not yet finalized for this section.</p>`}</article>`).join("");
+    const cards = matches.map(({ section, period, learner, result, finalized }) => `<article class="student-grade-result"><p class="eyebrow">${escapeHtml(section.level)} &bull; ${escapeHtml(period.name)}</p><h3>${escapeHtml(learner.name)}</h3><p class="student-subject">${escapeHtml(section.subject)}${section.section ? ` — ${escapeHtml(section.section)}` : ""}</p>${finalized ? `<p class="student-grade-label">Initial Grade</p><p class="student-grade">${format(result.initial.rounded, 0)}</p>` : `<p class="grade-pending">Grades are not yet finalized for this section.</p>`}</article>`).join("");
     showSearchModal(cards, true);
   }
 
@@ -482,6 +501,7 @@
         <div class="settings-grid" style="margin-top: 15px;">
           <label>Grade Level <input id="addClassLevel" placeholder="e.g. Grade 11"></label>
           <label>Subject <input id="addClassSubject" placeholder="e.g. General Science"></label>
+          <label>Section <input id="addClassSection" placeholder="e.g. Saint Alfonso de Orozco"></label>
           <label>Color Code Theme
             <select id="addClassTheme">
               ${["black","brown","red","blue","green","yellow","purple","orange","pink","gray"].map(c => 
@@ -512,6 +532,7 @@
         <div class="settings-grid" style="margin-top: 15px;">
           <label>Grade Level <input id="editSectionLevel" value="${safeValue(section.level)}"></label>
           <label>Subject <input id="editSectionSubject" value="${safeValue(section.subject)}"></label>
+          <label>Section <input id="editSectionSection" value="${safeValue(section.section)}" placeholder="e.g. Saint Alfonso de Orozco"></label>
           <label>Color Code Theme
             <select id="editSectionTheme">
               ${["black","brown","red","blue","green","yellow","purple","orange","pink","gray"].map(c => 
@@ -921,13 +942,14 @@
     if (action === "save-new-class") {
       const level = document.querySelector("#addClassLevel").value;
       const subject = document.querySelector("#addClassSubject").value;
+      const section = document.querySelector("#addClassSection").value;
       const theme = document.querySelector("#addClassTheme").value;
       
       const isSHS = String(level).includes("11") || String(level).includes("12");
       const group = isSHS ? "SHS" : "JHS";
       
       const newId = "class-" + Date.now();
-      const newClass = { id: newId, group, level, subject, weights: [20, 50, 30], theme, accent: theme, rosterSize: 42 };
+      const newClass = { id: newId, group, level, subject, section, weights: [20, 50, 30], theme, accent: theme, rosterSize: 42 };
       
       state.registry.push(newClass);
       state.sections[newId] = { periods: [initialPeriod(newClass)] };
@@ -945,6 +967,7 @@
       if (section) {
         section.level = document.querySelector("#editSectionLevel").value;
         section.subject = document.querySelector("#editSectionSubject").value;
+        section.section = document.querySelector("#editSectionSection").value;
         const theme = document.querySelector("#editSectionTheme").value;
         section.theme = theme;
         section.accent = theme;
