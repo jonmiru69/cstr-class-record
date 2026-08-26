@@ -2,20 +2,31 @@
   "use strict";
 
   const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode } = window.CSTRGrading;
-  const LOGIN_PASSWORD = "harty342002";
+  const VALID_PASSWORDS = ["harty342002", "maamsamcstr1234"];
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
 
   const registry = [
-    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
-    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
-    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science - Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
-    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III - Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42 },
-    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42 },
-    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42 },
-    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42 }
+    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", theme: "purple", accent: "purple", rosterSize: 42 },
+    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", theme: "green", accent: "green", rosterSize: 42 },
+    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science - Saint Pedro Calungsod", theme: "blue", accent: "blue", rosterSize: 42 },
+    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III - Saint Ezekiel Moreno", theme: "red", accent: "red", rosterSize: 42 },
+    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1 - Our Lady of Mount Carmel", theme: "blue", accent: "charcoal", rosterSize: 42 },
+    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Mount Carmel", theme: "blue", accent: "baby-blue", rosterSize: 42 },
+    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11 - Our Lady of Consolacion", theme: "blue", accent: "deep-red", rosterSize: 42 }
   ];
+
+  const DEFAULT_SUBJECT = "SCIENCE";
+  const SUBJECT_WEIGHTS = {
+    ENGLISH: { ww: 20, pt: 50, qa: 30, qaIntra: [0.30, 0.30, 0.40] },
+    MATHEMATICS: { ww: 20, pt: 50, qa: 30, qaIntra: [0.30, 0.30, 0.40] },
+    SCIENCE: { ww: 20, pt: 50, qa: 30, qaIntra: [0.30, 0.30, 0.40] },
+    FILIPINO: { ww: 20, pt: 50, qa: 30, qaIntra: [0.30, 0.30, 0.40] },
+    "ARALING PANLIPUNAN": { ww: 20, pt: 50, qa: 30, qaIntra: [0.30, 0.30, 0.40] },
+    MAPEH: { ww: 20, pt: 50, qa: 30, qaIntra: [0.30, 0.30, 0.40] }
+  };
+  const SUBJECT_OPTIONS = Object.keys(SUBJECT_WEIGHTS);
 
   let currentView = "home";
   let activeGroup = "JHS";
@@ -23,13 +34,12 @@
   let activePeriodIndex = 0;
   let state = createInitialState();
 
-  // Security & Sync Interlocks
   let isDataLoaded = false;
   let isLoading = false;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
 
-  function emptyRoster(size) {
-    return Array.from({ length: size }, () => ({ name: "", ww: Array(10).fill(""), pt: Array(8).fill(""), qa: Array(3).fill("") }));
+  function emptyRoster(size, wwLen = 10, ptLen = 8, qaLen = 3) {
+    return Array.from({ length: size }, () => ({ name: "", ww: Array(wwLen).fill(""), pt: Array(ptLen).fill(""), qa: Array(qaLen).fill("") }));
   }
 
   function initialPeriod(section) {
@@ -41,7 +51,7 @@
       wwHps: Array(10).fill(""),
       ptHps: Array(8).fill(""),
       qaHps: Array(3).fill(""),
-      roster: emptyRoster(section.rosterSize)
+      roster: emptyRoster(section.rosterSize, 10, 8, 3)
     };
   }
 
@@ -49,8 +59,13 @@
     return {
       version: 1,
       photo: "",
-      sections: Object.fromEntries(registry.map((section) => [section.id, { periods: [initialPeriod(section)] }]))
+      sections: Object.fromEntries(registry.map((section) => [section.id, { subject: DEFAULT_SUBJECT, periods: [initialPeriod(section)] }]))
     };
+  }
+
+  function currentWeights(section) {
+    const subject = (state.sections[section.id] && state.sections[section.id].subject) || DEFAULT_SUBJECT;
+    return SUBJECT_WEIGHTS[subject] || SUBJECT_WEIGHTS[DEFAULT_SUBJECT];
   }
 
   function normalizeState(saved) {
@@ -59,25 +74,40 @@
     base.photo = typeof saved.photo === "string" ? saved.photo : "";
     registry.forEach((section) => {
       const loaded = saved.sections && saved.sections[section.id];
-      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) return;
-      base.sections[section.id].periods = loaded.periods.map((period) => ({
-        name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
-        wwDates: fitArray(period.wwDates, 10),
-        ptDates: fitArray(period.ptDates, 8),
-        qaDates: fitArray(period.qaDates, 3),
-        wwHps: fitArray(period.wwHps, 10),
-        ptHps: fitArray(period.ptHps, 8),
-        qaHps: fitArray(period.qaHps, 3),
-        roster: Array.from({ length: section.rosterSize }, (_, index) => {
-          const learner = Array.isArray(period.roster) ? period.roster[index] : null;
-          return {
-            name: learner && typeof learner.name === "string" ? learner.name : "",
-            ww: fitArray(learner && learner.ww, 10),
-            pt: fitArray(learner && learner.pt, 8),
-            qa: fitArray(learner && learner.qa, 3)
-          };
-        })
-      }));
+      if (!loaded) return;
+      base.sections[section.id].subject = SUBJECT_OPTIONS.includes(loaded.subject) ? loaded.subject : DEFAULT_SUBJECT;
+      base.sections[section.id].level = loaded.level;
+      base.sections[section.id].customSubject = loaded.customSubject;
+      base.sections[section.id].theme = loaded.theme;
+      base.sections[section.id].accent = loaded.accent;
+
+      if (!Array.isArray(loaded.periods) || !loaded.periods.length) return;
+      
+      base.sections[section.id].periods = loaded.periods.map((period) => {
+        // Dynamic Length Safety Protocol (Prevents Data Wipe on Load)
+        const wwLen = Array.isArray(period.wwDates) ? Math.max(period.wwDates.length, 1) : 10;
+        const ptLen = Array.isArray(period.ptDates) ? Math.max(period.ptDates.length, 1) : 8;
+        const qaLen = Array.isArray(period.qaDates) ? Math.max(period.qaDates.length, 1) : 3;
+
+        return {
+          name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
+          wwDates: fitArray(period.wwDates, wwLen),
+          ptDates: fitArray(period.ptDates, ptLen),
+          qaDates: fitArray(period.qaDates, qaLen),
+          wwHps: fitArray(period.wwHps, wwLen),
+          ptHps: fitArray(period.ptHps, ptLen),
+          qaHps: fitArray(period.qaHps, qaLen),
+          roster: Array.from({ length: section.rosterSize }, (_, index) => {
+            const learner = Array.isArray(period.roster) ? period.roster[index] : null;
+            return {
+              name: learner && typeof learner.name === "string" ? learner.name : "",
+              ww: fitArray(learner && learner.ww, wwLen),
+              pt: fitArray(learner && learner.pt, ptLen),
+              qa: fitArray(learner && learner.qa, qaLen)
+            };
+          })
+        };
+      });
     });
     return base;
   }
@@ -91,6 +121,7 @@
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
   function button(label, action, className = "button", extra = "") { return `<button type="button" class="${className}" data-action="${action}" ${extra}>${label}</button>`; }
+  function componentControls(kind) { return `<div class="component-controls"><button type="button" class="ctrl-btn" data-action="add-col" data-kind="${kind}" title="Add column">+</button><button type="button" class="ctrl-btn" data-action="sub-col" data-kind="${kind}" title="Remove column">-</button></div>`; }
 
   function getLearnerCategory(name) {
     if (typeof name !== "string") return null;
@@ -214,34 +245,51 @@
     const edge = (group) => group === "JHS" ? `<span class="level-edge edge-green"></span><span class="level-edge edge-yellow"></span><span class="level-edge edge-red"></span><span class="level-edge edge-blue"></span>` : `<span class="level-edge edge-charcoal"></span><span class="level-edge edge-baby-blue"></span><span class="level-edge edge-deep-red"></span>`;
     const groupCards = ["JHS", "SHS"].map((group) => `<button type="button" class="level-card level-card-${group.toLowerCase()} ${activeGroup === group ? "is-active" : ""}" data-action="select-group" data-group="${group}">${edge(group)}<span class="level-card-kicker">${group}</span><strong>${group === "JHS" ? "Junior High School" : "Senior High School"}</strong><small>Choose a level to view its sections</small></button>`).join("");
     const sections = registry.filter((section) => section.group === activeGroup);
-    const sectionCards = sections.map((section) => `<button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>`).join("");
+    
+    const sectionCards = sections.map((section) => {
+      const secState = state.sections[section.id] || {};
+      const displayLevel = secState.level || section.level;
+      const displaySubject = secState.customSubject || section.subject;
+      const displayAccent = secState.accent || section.accent;
+      return `<button type="button" class="section-card accent-${displayAccent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(displayLevel)}</span><strong>${escapeHtml(displaySubject)}</strong><small>Open grade sheet</small></button>`;
+    }).join("");
+    
     return `<section class="record-chooser"><div class="section-heading"><div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p></div></div><div class="level-grid" aria-label="School levels">${groupCards}</div><div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div><div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div></section>`;
   }
 
   function renderSectionRecord() {
     const section = currentSection();
-    const periods = state.sections[section.id].periods;
+    const secState = state.sections[section.id] || {};
+    const periods = secState.periods;
     if (activePeriodIndex >= periods.length) activePeriodIndex = 0;
     const period = currentPeriod();
+    const weights = currentWeights(section);
+    const activeSubject = secState.subject || DEFAULT_SUBJECT;
     const { totalLearners } = computeLearnerNumbering(period.roster);
-    const periodTabs = periods.map((entry, index) => `<button type="button" class="tab theme-${section.theme}" data-action="select-period" data-period="${index}" aria-selected="${activePeriodIndex === index}">${escapeHtml(entry.name)}</button>`).join("");
+    const displayTheme = secState.theme || section.theme;
+    
+    const periodTabs = periods.map((entry, index) => `<button type="button" class="tab theme-${displayTheme}" data-action="select-period" data-period="${index}" aria-selected="${activePeriodIndex === index}">${escapeHtml(entry.name)}</button>`).join("");
+    const subjectOptions = SUBJECT_OPTIONS.map((subject) => `<option value="${subject}" ${subject === activeSubject ? "selected" : ""}>${subject}</option>`).join("");
     
     return `<div class="record-section"><div class="record-back">${button("← Back to sections", "go-records")}</div>
       <div class="section-heading"><div>
-        <div class="section-title-wrap"><h2>${escapeHtml(section.subject)}</h2><span id="liveLearnerCount" class="learner-count-badge">${totalLearners} Learner${totalLearners === 1 ? "" : "s"}</span></div>
-        <div class="record-meta"><span><strong>${section.level}</strong></span><span>Weights: <strong>${section.weights.join(" / ")}</strong></span><span>Roster capacity: <strong>${section.rosterSize}</strong></span></div>
+        <div class="section-title-wrap"><h2>${escapeHtml(secState.customSubject || section.subject)}</h2>
+          <button type="button" class="kebab-btn" data-action="edit-section" title="Edit Class Section" aria-label="Edit Section">⋮</button>
+          <label class="subject-picker"><span class="subject-picker-label">Subject</span><select class="subject-select" data-subject-select aria-label="Subject used for this sheet's grading weights">${subjectOptions}</select></label>
+          <span id="liveLearnerCount" class="learner-count-badge">${totalLearners} Learner${totalLearners === 1 ? "" : "s"}</span></div>
+        <div class="record-meta"><span><strong>${escapeHtml(secState.level || section.level)}</strong></span><span>Weights: <strong>${weights.ww} / ${weights.pt} / ${weights.qa}</strong></span><span>Roster capacity: <strong>${section.rosterSize}</strong></span></div>
       </div></div>
       <div class="period-tabs" aria-label="Grading period tabs">${periodTabs}</div>
       <div class="period-toolbar"><label for="periodName">Period name</label><input id="periodName" class="period-name" value="${safeValue(period.name)}" data-period-name>
       ${button("+ Add Grading Period", "add-period", "button button-yellow")}</div>
       <p class="paste-hint"><strong>Bulk multi-select & paste tip:</strong> click and drag across input cells vertically or horizontally to select blocks. Use <strong>Ctrl+C</strong> to copy, <strong>Ctrl+X</strong> to cut, <strong>Delete</strong> to clear, or paste (Ctrl+V) copied spreadsheet blocks straight from Excel/Sheets.</p>
-      <div class="legend"><span><i class="dot dot-red"></i>Raw score above HPS - correct before finalizing</span><span><i class="dot dot-code"></i>A = Absent · E = Excused · L = Late, all excluded from the grade computation</span><span>QA slots use fixed 30% / 30% / 40% intra-weights</span></div>
-      ${renderRecordTable(section, period)}</div>`;
+      <div class="legend"><span><i class="dot dot-red"></i>Raw score above HPS - correct before finalizing</span><span><i class="dot dot-code"></i>A = Absent, counted as a zero against that item's HPS · E = Excused, L = Late, excluded from computation as if the activity never happened</span></div>
+      ${renderRecordTable(section, period, weights)}</div>`;
   }
 
-  function renderRecordTable(section, period) {
+  function renderRecordTable(section, period, weights) {
     const dateHeaders = (kind, values, labels = []) => values.map((value, index) => {
-      const label = labels[index] ? `<span>${labels[index]}</span>` : "";
+      const label = labels[index] ? `<span>${labels[index]}</span>` : `<span>${kind.toUpperCase()} ${index + 1}</span>`;
       const borderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
       return `<th scope="col" class="activity-date-cell ${borderClass}">${label}<input class="activity-date" type="text" maxlength="12" placeholder="Date" data-date="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} activity ${index + 1} date"></th>`;
     }).join("");
@@ -249,17 +297,26 @@
       const borderClass = (index === 0 && kind === "pt") ? "border-start-pt" : (index === 0 && kind === "qa") ? "border-start-qa" : "";
       return `<td class="${borderClass}"><input type="number" min="0" step="any" inputmode="decimal" data-hps="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} ${index + 1} highest possible score"></td>`;
     }).join("");
+    
+    // Dynamically size QA labels and default weights
+    const qaLabels = period.qaDates.map((_, index) => {
+        const label = index === 0 ? "ST 1" : index === 1 ? "ST 2" : index === 2 ? "Term Exam" : `QA ${index + 1}`;
+        const w = weights.qaIntra[index] !== undefined ? weights.qaIntra[index] : (1 / period.qaDates.length);
+        return `${label} (${Math.round(w * 100)}%)`;
+    });
+
     const { numbering } = computeLearnerNumbering(period.roster);
-    const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section, numbering[rowIndex])).join("");
+    const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section, weights, numbering[rowIndex])).join("");
+    
     return `<div class="table-wrap"><table class="record-table compact-record"><thead>
-      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="13">Written Works (${section.weights[0]}%)</th><th class="component-header component-pt border-start-pt" scope="colgroup" colspan="11">Performance Tasks (${section.weights[1]}%)</th><th class="component-header component-qa border-start-qa" scope="colgroup" colspan="6">Quarterly Assessment (${section.weights[2]}%)</th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
-      <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>${dateHeaders("qa", period.qaDates, ["ST 1 (30%)", "ST 2 (30%)", "Term Exam (40%)"])}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th></tr>
-      <tr class="hps-row"><th colspan="10" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="8" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="3" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
+      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="${period.wwDates.length + 3}"><div class="header-with-controls">Written Works (${weights.ww}%)${componentControls("ww")}</div></th><th class="component-header component-pt border-start-pt" scope="colgroup" colspan="${period.ptDates.length + 3}"><div class="header-with-controls">Performance Tasks (${weights.pt}%)${componentControls("pt")}</div></th><th class="component-header component-qa border-start-qa" scope="colgroup" colspan="${period.qaDates.length + 3}"><div class="header-with-controls">Quarterly Assessment (${weights.qa}%)${componentControls("qa")}</div></th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
+      <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${weights.ww}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${weights.pt}%)</th>${dateHeaders("qa", period.qaDates, qaLabels)}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${weights.qa}%)</th></tr>
+      <tr class="hps-row"><th colspan="${period.wwDates.length}" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="${period.ptDates.length}" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="${period.qaDates.length}" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
       <tr class="hps-input-row"><th colspan="2" scope="row">Enter HPS</th>${hpsInputs("ww", period.wwHps)}<td colspan="3">&nbsp;</td>${hpsInputs("pt", period.ptHps)}<td colspan="3">&nbsp;</td>${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td>&nbsp;</td></tr>
       </thead><tbody>${rows}</tbody></table></div>`;
   }
 
-  function renderLearnerRow(learner, rowIndex, period, section, numDisplay) {
+  function renderLearnerRow(learner, rowIndex, period, section, weights, numDisplay) {
     const cat = getLearnerCategory(learner.name);
     const catClass = cat ? `row-category row-category-${cat}` : "";
 
@@ -268,14 +325,14 @@
       const inputClasses = [hasRawAboveHps(value, hpsValues[index]) ? "invalid" : "", isAttendanceCode(value) ? "code-cell" : ""].filter(Boolean).join(" ");
       return `<td class="${tdBorderClass}"><input class="${inputClasses}" type="text" inputmode="text" maxlength="6" autocomplete="off" data-score="${kind}" data-row="${rowIndex}" data-index="${index}" value="${safeValue(cat ? "" : value)}" ${cat ? 'disabled tabindex="-1"' : ''} title="Enter a numeric score, or A (Absent), E (Excused), L (Late)" aria-label="Learner ${rowIndex + 1} ${kind.toUpperCase()} ${index + 1}"></td>`;
     }).join("");
-    const result = learnerResult(learner, period, section.weights);
+    const result = learnerResult(learner, period, weights);
     return `<tr class="${catClass}" data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${numDisplay !== undefined ? numDisplay : ""}</th><td class="name-cell"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td></tr>`;
   }
 
   function learnerResult(learner, period, weights) {
-    const ww = calculateComponent(learner.ww, period.wwHps, weights[0]);
-    const pt = calculateComponent(learner.pt, period.ptHps, weights[1]);
-    const qa = calculateQuarterlyAssessment(learner.qa, period.qaHps, weights[2]);
+    const ww = calculateComponent(learner.ww, period.wwHps, weights.ww);
+    const pt = calculateComponent(learner.pt, period.ptHps, weights.pt);
+    const qa = calculateQuarterlyAssessment(learner.qa, period.qaHps, weights.qa, weights.qaIntra);
     return { ww, pt, qa, initial: calculateInitialGrade(ww, pt, qa) };
   }
 
@@ -316,7 +373,8 @@
 
   function isPeriodFinalized(period, section) {
     const learners = period.roster.filter((learner) => learner.name.trim() && !getLearnerCategory(learner.name));
-    return learners.length > 0 && learners.every((learner) => Number.isFinite(learnerResult(learner, period, section.weights).initial.rounded));
+    const weights = currentWeights(section);
+    return learners.length > 0 && learners.every((learner) => Number.isFinite(learnerResult(learner, period, weights).initial.rounded));
   }
 
   function searchStudent() {
@@ -324,15 +382,23 @@
     const query = normalizedName(input && input.value);
     if (!query) { showSearchModal("Enter the student's complete name to check a grade."); return; }
     const matches = [];
-    registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
-      period.roster.forEach((learner) => {
-        if (!normalizedName(learner.name).includes(query) || getLearnerCategory(learner.name)) return;
-        const result = learnerResult(learner, period, section.weights);
-        matches.push({ section, period, learner, result, finalized: isPeriodFinalized(period, section) });
+    registry.forEach((section) => {
+      const weights = currentWeights(section);
+      state.sections[section.id].periods.forEach((period) => {
+        period.roster.forEach((learner) => {
+          if (!normalizedName(learner.name).includes(query) || getLearnerCategory(learner.name)) return;
+          const result = learnerResult(learner, period, weights);
+          matches.push({ section, period, learner, result, finalized: isPeriodFinalized(period, section) });
+        });
       });
-    }));
+    });
     if (!matches.length) { showSearchModal("No exact student-name match was found. Please check the complete name and try again."); return; }
-    const cards = matches.map(({ section, period, learner, result, finalized }) => `<article class="student-grade-result"><p class="eyebrow">${escapeHtml(section.level)} &bull; ${escapeHtml(period.name)}</p><h3>${escapeHtml(learner.name)}</h3><p class="student-subject">${escapeHtml(section.subject)}</p>${finalized ? `<p class="student-grade-label">Initial Grade</p><p class="student-grade">${format(result.initial.rounded, 0)}</p>` : `<p class="grade-pending">Grades are not yet finalized for this section.</p>`}</article>`).join("");
+    const cards = matches.map(({ section, period, learner, result, finalized }) => {
+      const secState = state.sections[section.id] || {};
+      const dispLevel = secState.level || section.level;
+      const dispSubject = secState.customSubject || section.subject;
+      return `<article class="student-grade-result"><p class="eyebrow">${escapeHtml(dispLevel)} &bull; ${escapeHtml(period.name)}</p><h3>${escapeHtml(learner.name)}</h3><p class="student-subject">${escapeHtml(dispSubject)}</p>${finalized ? `<p class="student-grade-label">Initial Grade</p><p class="student-grade">${format(result.initial.rounded, 0)}</p>` : `<p class="grade-pending">Grades are not yet finalized for this section.</p>`}</article>`;
+    }).join("");
     showSearchModal(cards, true);
   }
 
@@ -349,7 +415,7 @@
     const learner = period.roster[rowIndex];
     const row = document.querySelector(`[data-learner-row="${rowIndex}"]`);
     if (!row) return;
-    const result = learnerResult(learner, period, section.weights);
+    const result = learnerResult(learner, period, currentWeights(section));
     row.querySelector(".summary-ww-total").textContent = scoreTotal(result.ww);
     row.querySelector(".summary-ww-ps").textContent = format(result.ww.percentage, 2);
     row.querySelector(".summary-ww-ws").textContent = format(result.ww.weighted, 2);
@@ -376,7 +442,6 @@
     if (btn) { btn.classList.toggle("saving", type === "saving"); btn.classList.toggle("error", type === "error"); }
   }
 
-  // Security Interlock: Physically block saving unless remote sync is confirmed
   function syncSaveControl() {
     const btn = document.querySelector("#saveChanges");
     if (!btn) return;
@@ -403,7 +468,6 @@
     const token = localStorage.getItem(GIST_TOKEN_KEY);
     if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token in Settings first.", "error"); return; }
     
-    // Hard Security Guardrail: Prevent execution if data was never confirmed loaded
     if (!isDataLoaded) {
       setStatus("⚠️ BLOCKED: Cannot save un-synchronized data! Please reload data from Settings first.", "error");
       alert("SECURITY BLOCK:\n\nYou are attempting to save while your remote GitHub data has not been confirmed loaded into this session.\n\nTo prevent overwriting and permanently losing your saved class records, saving has been blocked. Please open Settings and click 'Load saved data' first.");
@@ -412,29 +476,10 @@
 
     setStatus("Saving...", "saving");
     try {
-      // FIX: read the current Gist first and merge, instead of overwriting the
-      // whole file. This preserves any other data nested under a different
-      // key (e.g. another teacher's records) and writes ours back under our
-      // own login password, matching how the data was originally stored.
-      const getResponse = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
-        headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
-        cache: "no-store"
-      });
-      if (!getResponse.ok) throw new Error(`${getResponse.status} ${await getResponse.text()}`);
-      const existingGist = await getResponse.json();
-      const existingFile = existingGist.files["cstr-class-record-data.json"] || Object.values(existingGist.files)[0];
-      const existingContent = existingFile
-        ? (existingFile.truncated ? await (await fetch(existingFile.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : existingFile.content)
-        : "{}";
-      let allUsersData;
-      try { allUsersData = JSON.parse(existingContent || "{}"); } catch (parseError) { allUsersData = {}; }
-      if (!allUsersData || typeof allUsersData !== "object" || Array.isArray(allUsersData)) allUsersData = {};
-      allUsersData[LOGIN_PASSWORD] = state;
-
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
         method: "PATCH",
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ files: { "cstr-class-record-data.json": { content: JSON.stringify(allUsersData) } } })
+        body: JSON.stringify({ files: { "cstr-class-record-data.json": { content: JSON.stringify(state) } } })
       });
       if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
       setStatus("Saved ✓");
@@ -450,7 +495,6 @@
     syncSaveControl();
     setStatus("Loading saved data from GitHub...", "saving");
     try {
-      // cache: "no-store" prevents browsers from serving stale/empty cached payloads
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { 
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
         cache: "no-store" 
@@ -461,22 +505,15 @@
       if (!file) throw new Error("No JSON file was found in this Gist.");
       const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : file.content;
       
-      // FIX: older versions of this app stored data nested under the login
-      // password as a key (multi-user format), e.g. { "harty342002": {...} }.
-      // Unwrap it if present so existing saved data loads correctly.
-      const parsedGist = JSON.parse(content || "{}");
-      const ownedData = parsedGist && typeof parsedGist === "object" && parsedGist[LOGIN_PASSWORD]
-        ? parsedGist[LOGIN_PASSWORD]
-        : parsedGist;
-      state = normalizeState(ownedData);
+      state = normalizeState(JSON.parse(content || "{}"));
       activePeriodIndex = 0;
-      isDataLoaded = true; // Mark remote source of truth as synchronized!
+      isDataLoaded = true;
       isLoading = false;
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
       isLoading = false;
-      isDataLoaded = false; // Lock Save button on failure
+      isDataLoaded = false;
       render();
       setStatus(`Load Error: ${error.message}. Save is locked to protect data.`, "error"); 
     }
@@ -492,6 +529,41 @@
     document.body.append(modal);
   }
 
+  function renderEditSection() {
+    const section = currentSection();
+    const secState = state.sections[section.id] || {};
+    const colors = ["black", "brown", "red", "blue", "green", "yellow", "purple", "orange", "pink", "gray"];
+    const colorOptions = colors.map(c => `<option value="${c}" ${(secState.theme || section.theme) === c ? 'selected' : ''}>${c.charAt(0).toUpperCase() + c.slice(1)}</option>`).join("");
+    const levels = Array.from({length: 12}, (_, i) => i + 1);
+    const levelOptions = levels.map(l => `<option value="Grade ${l}" ${(secState.level || section.level) === `Grade ${l}` ? 'selected' : ''}>Grade ${l}</option>`).join("");
+
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop";
+    modal.innerHTML = `
+      <section class="modal" role="dialog" aria-modal="true">
+        <div class="section-heading">
+          <div><p class="eyebrow">Class Section</p><h2>Edit Class Details</h2></div>
+          ${button("Close", "close-settings")}
+        </div>
+        <div class="settings-grid">
+          <label>Grade Level
+            <select class="text-input" id="editLevel">${levelOptions}</select>
+          </label>
+          <label>Subject Display Name
+            <input id="editSubject" value="${safeValue(secState.customSubject || section.subject)}" autocomplete="off">
+          </label>
+          <label>Classroom Color Code
+            <select class="text-input" id="editTheme">${colorOptions}</select>
+          </label>
+        </div>
+        <div class="stack-actions" style="margin-top: 24px;">
+          ${button("Save Section Settings", "save-section", "button button-primary")}
+        </div>
+      </section>
+    `;
+    document.body.append(modal);
+  }
+
   function closeSettings() { document.querySelector(".modal-backdrop")?.remove(); }
 
   function saveSettings() {
@@ -502,7 +574,7 @@
     localStorage.setItem(GIST_TOKEN_KEY, token);
     closeSettings();
     setStatus("Settings saved. Auto-loading data now...");
-    loadFromGist(); // Auto-trigger load as soon as new settings are saved
+    loadFromGist();
   }
 
   function choosePhoto() { document.querySelector("#photoInput")?.click(); }
@@ -528,12 +600,17 @@
     reader.readAsDataURL(file);
   }
 
-  const FIELD_ORDER_LENGTH = 22;
+  const getFieldOrderLength = () => {
+    const period = currentPeriod();
+    return 1 + period.wwDates.length + period.ptDates.length + period.qaDates.length;
+  };
+
   function fieldStartColumn(target) {
+    const period = currentPeriod();
     if (target.dataset.nameRow !== undefined) return 0;
     if (target.dataset.score === "ww") return 1 + Number(target.dataset.index);
-    if (target.dataset.score === "pt") return 11 + Number(target.dataset.index);
-    if (target.dataset.score === "qa") return 19 + Number(target.dataset.index);
+    if (target.dataset.score === "pt") return 1 + period.wwDates.length + Number(target.dataset.index);
+    if (target.dataset.score === "qa") return 1 + period.wwDates.length + period.ptDates.length + Number(target.dataset.index);
     return null;
   }
 
@@ -607,9 +684,9 @@
         const l = period.roster[r];
         for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
           if (c === 0) l.name = "";
-          else if (c <= 10) l.ww[c - 1] = "";
-          else if (c <= 18) l.pt[c - 11] = "";
-          else if (c <= 21) l.qa[c - 19] = "";
+          else if (c <= period.wwDates.length) l.ww[c - 1] = "";
+          else if (c <= period.wwDates.length + period.ptDates.length) l.pt[c - 1 - period.wwDates.length] = "";
+          else if (c < getFieldOrderLength()) l.qa[c - 1 - period.wwDates.length - period.ptDates.length] = "";
         }
       }
       render();
@@ -628,9 +705,9 @@
       const l = period.roster[r];
       for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
         if (c === 0) rowVals.push(l.name || "");
-        else if (c <= 10) rowVals.push(l.ww[c - 1] || "");
-        else if (c <= 18) rowVals.push(l.pt[c - 11] || "");
-        else if (c <= 21) rowVals.push(l.qa[c - 19] || "");
+        else if (c <= period.wwDates.length) rowVals.push(l.ww[c - 1] || "");
+        else if (c <= period.wwDates.length + period.ptDates.length) rowVals.push(l.pt[c - 1 - period.wwDates.length] || "");
+        else rowVals.push(l.qa[c - 1 - period.wwDates.length - period.ptDates.length] || "");
       }
       lines.push(rowVals.join("\t"));
     }
@@ -649,9 +726,9 @@
       const l = period.roster[r];
       for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
         if (c === 0) { rowVals.push(l.name || ""); l.name = ""; }
-        else if (c <= 10) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
-        else if (c <= 18) { rowVals.push(l.pt[c - 11] || ""); l.pt[c - 11] = ""; }
-        else if (c <= 21) { rowVals.push(l.qa[c - 19] || ""); l.qa[c - 19] = ""; }
+        else if (c <= period.wwDates.length) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
+        else if (c <= period.wwDates.length + period.ptDates.length) { rowVals.push(l.pt[c - 1 - period.wwDates.length] || ""); l.pt[c - 1 - period.wwDates.length] = ""; }
+        else { rowVals.push(l.qa[c - 1 - period.wwDates.length - period.ptDates.length] || ""); l.qa[c - 1 - period.wwDates.length - period.ptDates.length] = ""; }
       }
       lines.push(rowVals.join("\t"));
     }
@@ -668,13 +745,13 @@
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
-      if (password === LOGIN_PASSWORD) { 
+      if (VALID_PASSWORDS.includes(password)) { 
         sessionStorage.setItem("cstr-class-record-login", "true"); 
         render(); 
         if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
           loadFromGist(); 
         } else {
-          isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+          isDataLoaded = true;
           syncSaveControl();
         }
       }
@@ -694,7 +771,41 @@
     if (action === "load-gist") { saveSettings(); loadFromGist(); }
     if (action === "choose-photo") choosePhoto();
     if (action === "search-student") searchStudent();
-    if (action === "close-search") document.querySelector(".modal-backdrop")?.remove();
+    if (action === "close-search") closeSettings();
+    if (action === "edit-section") renderEditSection();
+    if (action === "save-section") {
+      const section = currentSection();
+      if (!state.sections[section.id]) state.sections[section.id] = {};
+      state.sections[section.id].level = document.querySelector("#editLevel").value;
+      state.sections[section.id].customSubject = document.querySelector("#editSubject").value.trim();
+      state.sections[section.id].theme = document.querySelector("#editTheme").value;
+      state.sections[section.id].accent = document.querySelector("#editTheme").value;
+      closeSettings();
+      render();
+      setStatus("Section details updated locally. Remember to Save Changes.", "saving");
+    }
+    if (action === "add-col") {
+      const kind = target.dataset.kind;
+      const period = currentPeriod();
+      period[`${kind}Dates`].push("");
+      period[`${kind}Hps`].push("");
+      period.roster.forEach(l => l[kind].push(""));
+      render();
+      setStatus(`Added a new column to ${kind.toUpperCase()}.`);
+    }
+    if (action === "sub-col") {
+      const kind = target.dataset.kind;
+      const period = currentPeriod();
+      if (period[`${kind}Dates`].length > 1) {
+        period[`${kind}Dates`].pop();
+        period[`${kind}Hps`].pop();
+        period.roster.forEach(l => l[kind].pop());
+        render();
+        setStatus(`Removed the last column from ${kind.toUpperCase()}.`);
+      } else {
+        setStatus(`Cannot remove the only column remaining in ${kind.toUpperCase()}.`, "error");
+      }
+    }
   });
 
   document.addEventListener("keydown", (event) => {
@@ -746,6 +857,7 @@
 
     let rowsFilled = 0;
     let truncated = false;
+    const totalCols = getFieldOrderLength();
 
     lines.forEach((line, lineOffset) => {
       const rowIndex = startRow + lineOffset;
@@ -754,12 +866,12 @@
       const cells = line.split("\t");
       cells.forEach((cellValue, cellOffset) => {
         const column = startCol + cellOffset;
-        if (column >= FIELD_ORDER_LENGTH) { truncated = true; return; }
+        if (column >= totalCols) { truncated = true; return; }
         const value = cellValue.trim();
         if (column === 0) { learner.name = value; return; }
-        if (column <= 10) { learner.ww[column - 1] = sanitizeScoreValue(value); return; }
-        if (column <= 18) { learner.pt[column - 11] = sanitizeScoreValue(value); return; }
-        learner.qa[column - 19] = sanitizeScoreValue(value);
+        if (column <= period.wwDates.length) { learner.ww[column - 1] = sanitizeScoreValue(value); return; }
+        if (column <= period.wwDates.length + period.ptDates.length) { learner.pt[column - 1 - period.wwDates.length] = sanitizeScoreValue(value); return; }
+        learner.qa[column - 1 - period.wwDates.length - period.ptDates.length] = sanitizeScoreValue(value);
       });
       rowsFilled += 1;
     });
@@ -795,16 +907,24 @@
     }
   });
 
-  app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
+  app.addEventListener("change", (event) => {
+    if (event.target.id === "photoInput") { handlePhoto(event.target.files[0]); return; }
+    if (event.target.dataset.subjectSelect !== undefined) {
+      const section = currentSection();
+      if (!state.sections[section.id]) state.sections[section.id] = {};
+      state.sections[section.id].subject = SUBJECT_OPTIONS.includes(event.target.value) ? event.target.value : DEFAULT_SUBJECT;
+      render();
+      setStatus("Subject weight config changed. Remember to Save Changes.");
+    }
+  });
   
-  // INITIALIZATION ENGINE: Automatically sync on startup or page refresh!
   function initApp() {
     render();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
       if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
-        loadFromGist(); // Auto-pull data immediately without requiring a button click
+        loadFromGist(); 
       } else {
-        isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+        isDataLoaded = true; 
         syncSaveControl();
       }
     }
