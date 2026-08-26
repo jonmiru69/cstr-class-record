@@ -2,12 +2,15 @@
   "use strict";
 
   const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode } = window.CSTRGrading;
-  const LOGIN_PASSWORD = "harty342002";
+  
+  // Revision 3: Allowing multiple accounts
+  const VALID_LOGINS = ["harty342002", "maamsamcstr1234"];
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
 
-  const registry = [
+  // Default initial registry fallback
+  const DEFAULT_REGISTRY = [
     { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
     { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
     { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science - Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
@@ -19,7 +22,7 @@
 
   let currentView = "home";
   let activeGroup = "JHS";
-  let activeSectionId = registry[0].id;
+  let activeSectionId = DEFAULT_REGISTRY[0].id;
   let activePeriodIndex = 0;
   let state = createInitialState();
 
@@ -28,8 +31,8 @@
   let isLoading = false;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
 
-  function emptyRoster(size) {
-    return Array.from({ length: size }, () => ({ name: "", ww: Array(10).fill(""), pt: Array(8).fill(""), qa: Array(3).fill("") }));
+  function emptyRoster(size, wwLen = 10, ptLen = 8, qaLen = 3) {
+    return Array.from({ length: size }, () => ({ name: "", ww: Array(wwLen).fill(""), pt: Array(ptLen).fill(""), qa: Array(qaLen).fill("") }));
   }
 
   function initialPeriod(section) {
@@ -41,43 +44,64 @@
       wwHps: Array(10).fill(""),
       ptHps: Array(8).fill(""),
       qaHps: Array(3).fill(""),
-      roster: emptyRoster(section.rosterSize)
+      roster: emptyRoster(section.rosterSize || 42, 10, 8, 3)
     };
   }
 
   function createInitialState() {
     return {
-      version: 1,
+      version: 2,
       photo: "",
-      sections: Object.fromEntries(registry.map((section) => [section.id, { periods: [initialPeriod(section)] }]))
+      registry: JSON.parse(JSON.stringify(DEFAULT_REGISTRY)),
+      sections: Object.fromEntries(DEFAULT_REGISTRY.map((section) => [section.id, { periods: [initialPeriod(section)] }]))
     };
   }
 
+  // Revision 1 & 3: Normalizing data robustly to prevent wiping and correctly sync lengths
   function normalizeState(saved) {
     const base = createInitialState();
     if (!saved || typeof saved !== "object") return base;
     base.photo = typeof saved.photo === "string" ? saved.photo : "";
-    registry.forEach((section) => {
+    
+    // Restore saved section registry if it exists, otherwise adapt to default
+    if (Array.isArray(saved.registry) && saved.registry.length > 0) {
+      base.registry = JSON.parse(JSON.stringify(saved.registry));
+    }
+
+    base.registry.forEach((section) => {
       const loaded = saved.sections && saved.sections[section.id];
-      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) return;
-      base.sections[section.id].periods = loaded.periods.map((period) => ({
-        name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
-        wwDates: fitArray(period.wwDates, 10),
-        ptDates: fitArray(period.ptDates, 8),
-        qaDates: fitArray(period.qaDates, 3),
-        wwHps: fitArray(period.wwHps, 10),
-        ptHps: fitArray(period.ptHps, 8),
-        qaHps: fitArray(period.qaHps, 3),
-        roster: Array.from({ length: section.rosterSize }, (_, index) => {
-          const learner = Array.isArray(period.roster) ? period.roster[index] : null;
-          return {
-            name: learner && typeof learner.name === "string" ? learner.name : "",
-            ww: fitArray(learner && learner.ww, 10),
-            pt: fitArray(learner && learner.pt, 8),
-            qa: fitArray(learner && learner.qa, 3)
-          };
-        })
-      }));
+      if (!base.sections[section.id]) base.sections[section.id] = { periods: [] };
+
+      if (!loaded || !Array.isArray(loaded.periods) || !loaded.periods.length) {
+        base.sections[section.id].periods = [initialPeriod(section)];
+        return;
+      }
+
+      base.sections[section.id].periods = loaded.periods.map((period) => {
+        // Dynamically measure lengths to prevent wiping existing data arrays
+        const wwLen = Array.isArray(period.wwDates) ? period.wwDates.length : 10;
+        const ptLen = Array.isArray(period.ptDates) ? period.ptDates.length : 8;
+        const qaLen = Array.isArray(period.qaDates) ? period.qaDates.length : 3;
+
+        return {
+          name: typeof period.name === "string" && period.name.trim() ? period.name : initialPeriod(section).name,
+          wwDates: fitArray(period.wwDates, wwLen),
+          ptDates: fitArray(period.ptDates, ptLen),
+          qaDates: fitArray(period.qaDates, qaLen),
+          wwHps: fitArray(period.wwHps, wwLen),
+          ptHps: fitArray(period.ptHps, ptLen),
+          qaHps: fitArray(period.qaHps, qaLen),
+          roster: Array.from({ length: section.rosterSize || 42 }, (_, index) => {
+            const learner = Array.isArray(period.roster) ? period.roster[index] : null;
+            return {
+              name: learner && typeof learner.name === "string" ? learner.name : "",
+              ww: fitArray(learner && learner.ww, wwLen),
+              pt: fitArray(learner && learner.pt, ptLen),
+              qa: fitArray(learner && learner.qa, qaLen)
+            };
+          })
+        };
+      });
     });
     return base;
   }
@@ -86,7 +110,7 @@
     return Array.from({ length }, (_, index) => Array.isArray(values) && values[index] !== undefined ? values[index] : "");
   }
 
-  function currentSection() { return registry.find((section) => section.id === activeSectionId) || registry[0]; }
+  function currentSection() { return state.registry.find((section) => section.id === activeSectionId) || state.registry[0]; }
   function currentPeriod() { return state.sections[activeSectionId].periods[activePeriodIndex]; }
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
@@ -161,10 +185,12 @@
 
   function render() {
     app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
-    syncSaveControl();
-    adjustNameColumnWidth();
-    updateAllNumberingAndCounts();
-    updateHeaderScroll();
+    if (sessionStorage.getItem("cstr-class-record-login") === "true") {
+      syncSaveControl();
+      adjustNameColumnWidth();
+      updateAllNumberingAndCounts();
+      updateHeaderScroll();
+    }
   }
 
   function renderLogin() {
@@ -179,12 +205,13 @@
 
   function renderApp() {
     const content = currentView === "home" ? renderHome() : currentView === "chooser" ? renderClassRecord() : renderSectionRecord();
+    const currentUser = sessionStorage.getItem("cstr-class-record-user");
     return `<header class="app-header"><div class="app-header-inner">
       <div class="app-header-brand">
         <span class="header-logo"><img src="ASSETS/cstr-logo.png" alt="Colegio de Sto. Tomás – Recoletos crest"></span>
         <div><p class="eyebrow">CSTR • San Carlos City, Negros Occidental</p>
         <h1 class="app-title">Colegio de Sto. Tomás – Recoletos, Incorporated</h1>
-        <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026.</p></div>
+        <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026. Logged in as: <strong>${currentUser === "harty342002" ? "Sir Harty" : "Ma'am Sam"}</strong></p></div>
       </div>
       <div class="header-actions-wrap">
         <div class="header-actions">${button("💾 Save Changes", "save-changes", "button button-primary", `id="saveChanges"`)} ${button("Settings", "open-settings")} ${button("Log out", "logout")}</div>
@@ -205,7 +232,7 @@
     const portrait = state.photo ? `<img class="profile-photo" src="${state.photo}" alt="Teacher portrait">` : `<span class="silhouette" aria-hidden="true"></span><span class="photo-caption">Upload photo</span>`;
     return `<section class="home-grid"><div><input id="photoInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
       <button class="photo-frame" type="button" data-action="choose-photo" aria-label="Upload teacher photo">${portrait}</button></div>
-      <div><p class="eyebrow">Class record owner</p><p class="teacher-block">Class record by full-time faculty member, Junior High School Science and Research teacher, Senior High School Physics and General Science teacher and Research adviser — <strong>RAMELITO JR. C. SANCHEZ, LPT.</strong></p>
+      <div><p class="eyebrow">Class record owner</p><p class="teacher-block">Class record by full-time faculty member, Junior High School Science and Research teacher, Senior High School Physics and General Science teacher and Research adviser.</p>
       <div class="home-cta">${button("Proceed to Class Record →", "go-records", "button button-primary")}</div>
       <p id="photoNote" class="form-note">Photo uploads accept PNG and JPEG files only.</p></div></section>`;
   }
@@ -213,8 +240,13 @@
   function renderClassRecord() {
     const edge = (group) => group === "JHS" ? `<span class="level-edge edge-green"></span><span class="level-edge edge-yellow"></span><span class="level-edge edge-red"></span><span class="level-edge edge-blue"></span>` : `<span class="level-edge edge-charcoal"></span><span class="level-edge edge-baby-blue"></span><span class="level-edge edge-deep-red"></span>`;
     const groupCards = ["JHS", "SHS"].map((group) => `<button type="button" class="level-card level-card-${group.toLowerCase()} ${activeGroup === group ? "is-active" : ""}" data-action="select-group" data-group="${group}">${edge(group)}<span class="level-card-kicker">${group}</span><strong>${group === "JHS" ? "Junior High School" : "Senior High School"}</strong><small>Choose a level to view its sections</small></button>`).join("");
-    const sections = registry.filter((section) => section.group === activeGroup);
-    const sectionCards = sections.map((section) => `<button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>`).join("");
+    const sections = state.registry.filter((section) => section.group === activeGroup);
+    // Revision 2: Added Kebab Menu Edit Buttons wrapped around section cards
+    const sectionCards = sections.map((section) => `
+      <div class="section-card-wrap">
+        <button type="button" class="kebab-btn" data-action="open-edit-section" data-section="${section.id}" aria-label="Edit Section">⋮</button>
+        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>
+      </div>`).join("");
     return `<section class="record-chooser"><div class="section-heading"><div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p></div></div><div class="level-grid" aria-label="School levels">${groupCards}</div><div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div><div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div></section>`;
   }
 
@@ -235,7 +267,7 @@
       <div class="period-toolbar"><label for="periodName">Period name</label><input id="periodName" class="period-name" value="${safeValue(period.name)}" data-period-name>
       ${button("+ Add Grading Period", "add-period", "button button-yellow")}</div>
       <p class="paste-hint"><strong>Bulk multi-select & paste tip:</strong> click and drag across input cells vertically or horizontally to select blocks. Use <strong>Ctrl+C</strong> to copy, <strong>Ctrl+X</strong> to cut, <strong>Delete</strong> to clear, or paste (Ctrl+V) copied spreadsheet blocks straight from Excel/Sheets.</p>
-      <div class="legend"><span><i class="dot dot-red"></i>Raw score above HPS - correct before finalizing</span><span><i class="dot dot-code"></i>A = Absent · E = Excused · L = Late, all excluded from the grade computation</span><span>QA slots use fixed 30% / 30% / 40% intra-weights</span></div>
+      <div class="legend"><span><i class="dot dot-red"></i>Raw score above HPS - correct before finalizing</span><span><i class="dot dot-code"></i>A = Absent · E = Excused · L = Late, all excluded from the grade computation</span><span>QA slots calculate uniformly across entered values.</span></div>
       ${renderRecordTable(section, period)}</div>`;
   }
 
@@ -250,12 +282,52 @@
       return `<td class="${borderClass}"><input type="number" min="0" step="any" inputmode="decimal" data-hps="${kind}" data-index="${index}" value="${safeValue(value)}" aria-label="${kind.toUpperCase()} ${index + 1} highest possible score"></td>`;
     }).join("");
     const { numbering } = computeLearnerNumbering(period.roster);
+    
+    // Calculate dynamic colspan counts for Revision 1
+    const wwLen = period.wwDates.length;
+    const ptLen = period.ptDates.length;
+    const qaLen = period.qaDates.length;
+    const qaLabels = qaLen === 3 ? ["ST 1 (30%)", "ST 2 (30%)", "Term Exam (40%)"] : [];
+
     const rows = period.roster.map((learner, rowIndex) => renderLearnerRow(learner, rowIndex, period, section, numbering[rowIndex])).join("");
+    
     return `<div class="table-wrap"><table class="record-table compact-record"><thead>
-      <tr class="component-row"><th class="number-cell" scope="col" rowspan="3">#</th><th class="name-cell" scope="col" rowspan="3">Learner name</th><th class="component-header component-ww" scope="colgroup" colspan="13">Written Works (${section.weights[0]}%)</th><th class="component-header component-pt border-start-pt" scope="colgroup" colspan="11">Performance Tasks (${section.weights[1]}%)</th><th class="component-header component-qa border-start-qa" scope="colgroup" colspan="6">Quarterly Assessment (${section.weights[2]}%)</th><th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th></tr>
-      <tr class="activity-row">${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>${dateHeaders("qa", period.qaDates, ["ST 1 (30%)", "ST 2 (30%)", "Term Exam (40%)"])}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th></tr>
-      <tr class="hps-row"><th colspan="10" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th><th colspan="8" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th><th colspan="3" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th></tr>
-      <tr class="hps-input-row"><th colspan="2" scope="row">Enter HPS</th>${hpsInputs("ww", period.wwHps)}<td colspan="3">&nbsp;</td>${hpsInputs("pt", period.ptHps)}<td colspan="3">&nbsp;</td>${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td>&nbsp;</td></tr>
+      <tr class="component-row">
+        <th class="number-cell" scope="col" rowspan="3">#</th>
+        <th class="name-cell" scope="col" rowspan="3">Learner name</th>
+        <th class="component-header component-ww" scope="colgroup" colspan="${wwLen + 3}">
+          Written Works (${section.weights[0]}%)
+          <button type="button" class="col-btn" data-action="add-col" data-kind="ww" title="Add Column">+</button>
+          <button type="button" class="col-btn" data-action="remove-col" data-kind="ww" title="Remove Column">-</button>
+        </th>
+        <th class="component-header component-pt border-start-pt" scope="colgroup" colspan="${ptLen + 3}">
+          Performance Tasks (${section.weights[1]}%)
+          <button type="button" class="col-btn" data-action="add-col" data-kind="pt" title="Add Column">+</button>
+          <button type="button" class="col-btn" data-action="remove-col" data-kind="pt" title="Remove Column">-</button>
+        </th>
+        <th class="component-header component-qa border-start-qa" scope="colgroup" colspan="${qaLen + 3}">
+          Quarterly Assessment (${section.weights[2]}%)
+          <button type="button" class="col-btn" data-action="add-col" data-kind="qa" title="Add Column">+</button>
+          <button type="button" class="col-btn" data-action="remove-col" data-kind="qa" title="Remove Column">-</button>
+        </th>
+        <th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th>
+      </tr>
+      <tr class="activity-row">
+        ${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>
+        ${dateHeaders("pt", period.ptDates)}<th class="component-summary component-pt" scope="col">Total PT</th><th class="component-summary component-pt" scope="col">PS</th><th class="component-summary component-pt" scope="col">WS<br>(${section.weights[1]}%)</th>
+        ${dateHeaders("qa", period.qaDates, qaLabels)}<th class="component-summary component-qa" scope="col">Total QA</th><th class="component-summary component-qa" scope="col">PS</th><th class="component-summary component-qa" scope="col">WS<br>(${section.weights[2]}%)</th>
+      </tr>
+      <tr class="hps-row">
+        <th colspan="${wwLen}" scope="row">Highest Possible Scores (HPS)</th><th class="component-summary component-ww">Raw / HPS</th><th class="component-summary component-ww">Percentage</th><th class="component-summary component-ww">Weighted</th>
+        <th colspan="${ptLen}" scope="row" class="border-start-pt">Highest Possible Scores (HPS)</th><th class="component-summary component-pt">Raw / HPS</th><th class="component-summary component-pt">Percentage</th><th class="component-summary component-pt">Weighted</th>
+        <th colspan="${qaLen}" scope="row" class="border-start-qa">Highest Possible Scores (HPS)</th><th class="component-summary component-qa">Raw / HPS</th><th class="component-summary component-qa">Percentage</th><th class="component-summary component-qa">Weighted</th>
+      </tr>
+      <tr class="hps-input-row">
+        <th colspan="2" scope="row">Enter HPS</th>
+        ${hpsInputs("ww", period.wwHps)}<td colspan="3">&nbsp;</td>
+        ${hpsInputs("pt", period.ptHps)}<td colspan="3">&nbsp;</td>
+        ${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td>&nbsp;</td>
+      </tr>
       </thead><tbody>${rows}</tbody></table></div>`;
   }
 
@@ -324,7 +396,7 @@
     const query = normalizedName(input && input.value);
     if (!query) { showSearchModal("Enter the student's complete name to check a grade."); return; }
     const matches = [];
-    registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
+    state.registry.forEach((section) => state.sections[section.id].periods.forEach((period) => {
       period.roster.forEach((learner) => {
         if (!normalizedName(learner.name).includes(query) || getLearnerCategory(learner.name)) return;
         const result = learnerResult(learner, period, section.weights);
@@ -340,6 +412,37 @@
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
     modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("Close", "close-search")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
+    document.body.append(modal);
+  }
+
+  // Revision 2 Modal Output for Section Edit
+  function renderEditSection(sectionId) {
+    const section = state.registry.find(s => s.id === sectionId);
+    if (!section) return;
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop";
+    modal.innerHTML = `
+      <section class="modal" role="dialog">
+        <div class="section-heading">
+          <div><p class="eyebrow">Settings</p><h2>Edit Class Section</h2></div>
+          ${button("Close", "close-modal")}
+        </div>
+        <div class="settings-grid" style="margin-top: 15px;">
+          <label>Grade Level <input id="editSectionLevel" value="${safeValue(section.level)}"></label>
+          <label>Subject <input id="editSectionSubject" value="${safeValue(section.subject)}"></label>
+          <label>Color Code Theme
+            <select id="editSectionTheme">
+              ${["black","brown","red","blue","green","yellow","purple","orange","pink","gray"].map(c => 
+                `<option value="${c}" ${section.theme === c ? "selected" : ""}>${c.charAt(0).toUpperCase() + c.slice(1)}</option>`
+              ).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="stack-actions" style="margin-top:24px;">
+          <button type="button" class="button button-primary" data-action="save-section-edit" data-section="${section.id}">Save Changes</button>
+        </div>
+      </section>
+    `;
     document.body.append(modal);
   }
 
@@ -376,7 +479,6 @@
     if (btn) { btn.classList.toggle("saving", type === "saving"); btn.classList.toggle("error", type === "error"); }
   }
 
-  // Security Interlock: Physically block saving unless remote sync is confirmed
   function syncSaveControl() {
     const btn = document.querySelector("#saveChanges");
     if (!btn) return;
@@ -403,7 +505,6 @@
     const token = localStorage.getItem(GIST_TOKEN_KEY);
     if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token in Settings first.", "error"); return; }
     
-    // Hard Security Guardrail: Prevent execution if data was never confirmed loaded
     if (!isDataLoaded) {
       setStatus("⚠️ BLOCKED: Cannot save un-synchronized data! Please reload data from Settings first.", "error");
       alert("SECURITY BLOCK:\n\nYou are attempting to save while your remote GitHub data has not been confirmed loaded into this session.\n\nTo prevent overwriting and permanently losing your saved class records, saving has been blocked. Please open Settings and click 'Load saved data' first.");
@@ -412,10 +513,6 @@
 
     setStatus("Saving...", "saving");
     try {
-      // FIX: read the current Gist first and merge, instead of overwriting the
-      // whole file. This preserves any other data nested under a different
-      // key (e.g. another teacher's records) and writes ours back under our
-      // own login password, matching how the data was originally stored.
       const getResponse = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
         cache: "no-store"
@@ -426,10 +523,13 @@
       const existingContent = existingFile
         ? (existingFile.truncated ? await (await fetch(existingFile.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : existingFile.content)
         : "{}";
+      
       let allUsersData;
       try { allUsersData = JSON.parse(existingContent || "{}"); } catch (parseError) { allUsersData = {}; }
       if (!allUsersData || typeof allUsersData !== "object" || Array.isArray(allUsersData)) allUsersData = {};
-      allUsersData[LOGIN_PASSWORD] = state;
+      
+      const currentUser = sessionStorage.getItem("cstr-class-record-user");
+      allUsersData[currentUser] = state;
 
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
         method: "PATCH",
@@ -450,7 +550,6 @@
     syncSaveControl();
     setStatus("Loading saved data from GitHub...", "saving");
     try {
-      // cache: "no-store" prevents browsers from serving stale/empty cached payloads
       const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { 
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
         cache: "no-store" 
@@ -461,22 +560,22 @@
       if (!file) throw new Error("No JSON file was found in this Gist.");
       const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : file.content;
       
-      // FIX: older versions of this app stored data nested under the login
-      // password as a key (multi-user format), e.g. { "harty342002": {...} }.
-      // Unwrap it if present so existing saved data loads correctly.
       const parsedGist = JSON.parse(content || "{}");
-      const ownedData = parsedGist && typeof parsedGist === "object" && parsedGist[LOGIN_PASSWORD]
-        ? parsedGist[LOGIN_PASSWORD]
-        : parsedGist;
+      const currentUser = sessionStorage.getItem("cstr-class-record-user");
+      // Gracefully find the current user's data object, or fallback if unkeyed root JSON is present
+      const ownedData = parsedGist && typeof parsedGist === "object" && parsedGist[currentUser]
+        ? parsedGist[currentUser]
+        : (parsedGist.version ? parsedGist : {});
+
       state = normalizeState(ownedData);
       activePeriodIndex = 0;
-      isDataLoaded = true; // Mark remote source of truth as synchronized!
+      isDataLoaded = true;
       isLoading = false;
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
       isLoading = false;
-      isDataLoaded = false; // Lock Save button on failure
+      isDataLoaded = false;
       render();
       setStatus(`Load Error: ${error.message}. Save is locked to protect data.`, "error"); 
     }
@@ -502,7 +601,7 @@
     localStorage.setItem(GIST_TOKEN_KEY, token);
     closeSettings();
     setStatus("Settings saved. Auto-loading data now...");
-    loadFromGist(); // Auto-trigger load as soon as new settings are saved
+    loadFromGist(); 
   }
 
   function choosePhoto() { document.querySelector("#photoInput")?.click(); }
@@ -528,12 +627,13 @@
     reader.readAsDataURL(file);
   }
 
-  const FIELD_ORDER_LENGTH = 22;
-  function fieldStartColumn(target) {
+  function fieldStartColumn(target, period = currentPeriod()) {
+    const wwLen = period.wwDates.length;
+    const ptLen = period.ptDates.length;
     if (target.dataset.nameRow !== undefined) return 0;
     if (target.dataset.score === "ww") return 1 + Number(target.dataset.index);
-    if (target.dataset.score === "pt") return 11 + Number(target.dataset.index);
-    if (target.dataset.score === "qa") return 19 + Number(target.dataset.index);
+    if (target.dataset.score === "pt") return 1 + wwLen + Number(target.dataset.index);
+    if (target.dataset.score === "qa") return 1 + wwLen + ptLen + Number(target.dataset.index);
     return null;
   }
 
@@ -603,13 +703,19 @@
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       const period = currentPeriod();
+      const wwLen = period.wwDates.length;
+      const ptLen = period.ptDates.length;
+      const qaLen = period.qaDates.length;
+      const totalCols = 1 + wwLen + ptLen + qaLen;
+
       for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
         const l = period.roster[r];
         for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+          if (c >= totalCols) continue;
           if (c === 0) l.name = "";
-          else if (c <= 10) l.ww[c - 1] = "";
-          else if (c <= 18) l.pt[c - 11] = "";
-          else if (c <= 21) l.qa[c - 19] = "";
+          else if (c <= wwLen) l.ww[c - 1] = "";
+          else if (c <= wwLen + ptLen) l.pt[c - 1 - wwLen] = "";
+          else l.qa[c - 1 - wwLen - ptLen] = "";
         }
       }
       render();
@@ -623,14 +729,20 @@
     if (!bounds || (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol && document.activeElement.tagName === "INPUT")) return;
     const period = currentPeriod();
     const lines = [];
+    const wwLen = period.wwDates.length;
+    const ptLen = period.ptDates.length;
+    const qaLen = period.qaDates.length;
+    const totalCols = 1 + wwLen + ptLen + qaLen;
+
     for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
       const rowVals = [];
       const l = period.roster[r];
       for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        if (c >= totalCols) continue;
         if (c === 0) rowVals.push(l.name || "");
-        else if (c <= 10) rowVals.push(l.ww[c - 1] || "");
-        else if (c <= 18) rowVals.push(l.pt[c - 11] || "");
-        else if (c <= 21) rowVals.push(l.qa[c - 19] || "");
+        else if (c <= wwLen) rowVals.push(l.ww[c - 1] || "");
+        else if (c <= wwLen + ptLen) rowVals.push(l.pt[c - 1 - wwLen] || "");
+        else rowVals.push(l.qa[c - 1 - wwLen - ptLen] || "");
       }
       lines.push(rowVals.join("\t"));
     }
@@ -644,14 +756,20 @@
     if (!bounds || (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol && document.activeElement.tagName === "INPUT")) return;
     const period = currentPeriod();
     const lines = [];
+    const wwLen = period.wwDates.length;
+    const ptLen = period.ptDates.length;
+    const qaLen = period.qaDates.length;
+    const totalCols = 1 + wwLen + ptLen + qaLen;
+
     for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
       const rowVals = [];
       const l = period.roster[r];
       for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        if (c >= totalCols) continue;
         if (c === 0) { rowVals.push(l.name || ""); l.name = ""; }
-        else if (c <= 10) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
-        else if (c <= 18) { rowVals.push(l.pt[c - 11] || ""); l.pt[c - 11] = ""; }
-        else if (c <= 21) { rowVals.push(l.qa[c - 19] || ""); l.qa[c - 19] = ""; }
+        else if (c <= wwLen) { rowVals.push(l.ww[c - 1] || ""); l.ww[c - 1] = ""; }
+        else if (c <= wwLen + ptLen) { rowVals.push(l.pt[c - 1 - wwLen] || ""); l.pt[c - 1 - wwLen] = ""; }
+        else { rowVals.push(l.qa[c - 1 - wwLen - ptLen] || ""); l.qa[c - 1 - wwLen - ptLen] = ""; }
       }
       lines.push(rowVals.join("\t"));
     }
@@ -665,25 +783,67 @@
     const target = event.target.closest("[data-action]");
     if (!target) return;
     const action = target.dataset.action;
+    
+    // Login Verification Revision
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
-      if (password === LOGIN_PASSWORD) { 
-        sessionStorage.setItem("cstr-class-record-login", "true"); 
+      if (VALID_LOGINS.includes(password)) { 
+        sessionStorage.setItem("cstr-class-record-login", "true");
+        sessionStorage.setItem("cstr-class-record-user", password);
         render(); 
         if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
           loadFromGist(); 
         } else {
-          isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+          isDataLoaded = true;
           syncSaveControl();
         }
+      } else { 
+        error.textContent = "Incorrect password. Please try again."; error.classList.add("error"); 
       }
-      else { error.textContent = "Incorrect password. Please try again."; error.classList.add("error"); }
     }
-    if (action === "logout") { sessionStorage.removeItem("cstr-class-record-login"); currentView = "home"; render(); }
+    
+    // Revision 1 Buttons for Columns
+    if (action === "add-col") {
+      const kind = target.dataset.kind; 
+      const period = currentPeriod();
+      period[`${kind}Dates`].push("");
+      period[`${kind}Hps`].push("");
+      period.roster.forEach(l => l[kind].push(""));
+      render();
+    }
+    if (action === "remove-col") {
+      const kind = target.dataset.kind; 
+      const period = currentPeriod();
+      if (period[`${kind}Dates`].length > 1) { 
+        period[`${kind}Dates`].pop();
+        period[`${kind}Hps`].pop();
+        period.roster.forEach(l => l[kind].pop());
+        render();
+      }
+    }
+
+    // Revision 2 Modals Handlers
+    if (action === "open-edit-section") renderEditSection(target.dataset.section);
+    if (action === "close-modal") document.querySelector(".modal-backdrop")?.remove();
+    if (action === "save-section-edit") {
+      const section = state.registry.find(s => s.id === target.dataset.section);
+      if (section) {
+        section.level = document.querySelector("#editSectionLevel").value;
+        section.subject = document.querySelector("#editSectionSubject").value;
+        const theme = document.querySelector("#editSectionTheme").value;
+        section.theme = theme;
+        section.accent = theme;
+        render();
+        setStatus("Section details modified locally. Do not forget to save changes.");
+      }
+      document.querySelector(".modal-backdrop")?.remove();
+    }
+
+    if (action === "logout") { sessionStorage.removeItem("cstr-class-record-login"); sessionStorage.removeItem("cstr-class-record-user"); currentView = "home"; render(); }
     if (action === "go-home") { currentView = "home"; render(); }
     if (action === "go-records") { currentView = "chooser"; render(); }
-    if (action === "select-group") { activeGroup = target.dataset.group; activeSectionId = registry.find((section) => section.group === activeGroup).id; activePeriodIndex = 0; currentView = "chooser"; render(); }
+    if (action === "select-group") { activeGroup = target.dataset.group; activeSectionId = state.registry.find((section) => section.group === activeGroup).id; activePeriodIndex = 0; currentView = "chooser"; render(); }
     if (action === "select-section") { activeSectionId = target.dataset.section; activeGroup = currentSection().group; activePeriodIndex = 0; currentView = "record"; render(); }
     if (action === "select-period") { activePeriodIndex = Number(target.dataset.period); render(); }
     if (action === "add-period") addPeriod();
@@ -747,6 +907,11 @@
     let rowsFilled = 0;
     let truncated = false;
 
+    const wwLen = period.wwDates.length;
+    const ptLen = period.ptDates.length;
+    const qaLen = period.qaDates.length;
+    const totalCols = 1 + wwLen + ptLen + qaLen;
+
     lines.forEach((line, lineOffset) => {
       const rowIndex = startRow + lineOffset;
       if (rowIndex >= section.rosterSize) { truncated = true; return; }
@@ -754,12 +919,12 @@
       const cells = line.split("\t");
       cells.forEach((cellValue, cellOffset) => {
         const column = startCol + cellOffset;
-        if (column >= FIELD_ORDER_LENGTH) { truncated = true; return; }
+        if (column >= totalCols) { truncated = true; return; }
         const value = cellValue.trim();
         if (column === 0) { learner.name = value; return; }
-        if (column <= 10) { learner.ww[column - 1] = sanitizeScoreValue(value); return; }
-        if (column <= 18) { learner.pt[column - 11] = sanitizeScoreValue(value); return; }
-        learner.qa[column - 19] = sanitizeScoreValue(value);
+        if (column <= wwLen) { learner.ww[column - 1] = sanitizeScoreValue(value); return; }
+        if (column <= wwLen + ptLen) { learner.pt[column - 1 - wwLen] = sanitizeScoreValue(value); return; }
+        learner.qa[column - 1 - wwLen - ptLen] = sanitizeScoreValue(value);
       });
       rowsFilled += 1;
     });
@@ -797,14 +962,13 @@
 
   app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
   
-  // INITIALIZATION ENGINE: Automatically sync on startup or page refresh!
   function initApp() {
     render();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
       if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
-        loadFromGist(); // Auto-pull data immediately without requiring a button click
+        loadFromGist(); 
       } else {
-        isDataLoaded = true; // No Gist configured yet, unlock for local drafting
+        isDataLoaded = true; 
         syncSaveControl();
       }
     }
