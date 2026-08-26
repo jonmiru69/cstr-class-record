@@ -249,19 +249,27 @@
     return `<section class="home-grid"><div><input id="photoInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
       <button class="photo-frame" type="button" data-action="choose-photo" aria-label="Upload teacher photo">${portrait}</button></div>
       <div>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <p class="eyebrow" style="margin: 0;">Class record owner</p>
-          <button type="button" class="kebab-btn" data-action="open-edit-teacher" aria-label="Edit Teacher" style="border: none; background: transparent; font-size: 1.5rem; cursor: pointer; color: var(--text);">⋮</button>
-        </div>
+        <p class="eyebrow" style="margin: 0 0 10px;">Class record owner</p>
         <div class="teacher-block">
-          <h2 class="teacher-name">${escapeHtml(state.teacher.name)}</h2>
-          <p class="teacher-role">${escapeHtml(state.teacher.specialization)} &bull; ${escapeHtml(state.teacher.level)} Level</p>
+          <label class="teacher-name-field">
+            <span class="sr-only">Name</span>
+            <input type="text" class="teacher-name-input" data-teacher="name" value="${safeValue(state.teacher.name)}" placeholder="Full name">
+          </label>
           <dl class="teacher-meta">
-            <div><dt>Age</dt><dd>${escapeHtml(state.teacher.age)}</dd></div>
-            <div><dt>Specialization</dt><dd>${escapeHtml(state.teacher.specialization)}</dd></div>
-            <div><dt>School Level</dt><dd>${escapeHtml(state.teacher.level)}</dd></div>
+            <div><dt>Age</dt><dd><input type="number" min="0" class="teacher-meta-input" data-teacher="age" value="${safeValue(state.teacher.age)}" placeholder="Age" aria-label="Age"></dd></div>
+            <div><dt>Specialization</dt><dd><input type="text" class="teacher-meta-input" data-teacher="specialization" value="${safeValue(state.teacher.specialization)}" placeholder="e.g. Science and Research" aria-label="Specialization"></dd></div>
+            <div><dt>School Level</dt><dd>
+              <select class="teacher-meta-input" data-teacher="level" aria-label="School level">
+                <option value="Elementary" ${state.teacher.level === "Elementary" ? "selected" : ""}>Elementary</option>
+                <option value="Secondary" ${state.teacher.level === "Secondary" ? "selected" : ""}>Secondary</option>
+              </select>
+            </dd></div>
           </dl>
-          <p class="teacher-bio">${escapeHtml(state.teacher.bio)}</p>
+          <label class="teacher-bio-field">
+            <span class="sr-only">Bio</span>
+            <textarea class="teacher-bio-input" data-teacher="bio" placeholder="Short bio, role description...">${safeValue(state.teacher.bio)}</textarea>
+          </label>
+          <p class="teacher-edit-hint">Tap any field above to edit it, then press <strong>💾 Save Changes</strong> at the top to store your updates.</p>
         </div>
         <div class="home-cta">${button("Proceed to Class Record →", "go-records", "button button-primary")}</div>
         <p id="photoNote" class="form-note">Photo uploads accept PNG and JPEG files only.</p>
@@ -456,36 +464,6 @@
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
     modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("Close", "close-search")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
-    document.body.append(modal);
-  }
-
-  function renderEditTeacher() {
-    const t = state.teacher;
-    const modal = document.createElement("div");
-    modal.className = "modal-backdrop";
-    modal.innerHTML = `
-      <section class="modal" role="dialog">
-        <div class="section-heading">
-          <div><p class="eyebrow">Owner Settings</p><h2>Edit Teacher Info</h2></div>
-          ${button("Close", "close-modal")}
-        </div>
-        <div class="settings-grid" style="margin-top: 15px;">
-          <label>Name <input id="editTeacherName" value="${safeValue(t.name)}"></label>
-          <label>Age <input id="editTeacherAge" type="number" value="${safeValue(t.age)}"></label>
-          <label>Specialization <input id="editTeacherSpec" value="${safeValue(t.specialization)}"></label>
-          <label>Level 
-            <select id="editTeacherLevel">
-              <option value="Elementary" ${t.level === "Elementary" ? "selected" : ""}>Elementary</option>
-              <option value="Secondary" ${t.level === "Secondary" ? "selected" : ""}>Secondary</option>
-            </select>
-          </label>
-          <label>Bio <textarea id="editTeacherBio" style="width:100%; min-height:80px; padding:10px; border:1px solid var(--border); border-radius:8px;">${safeValue(t.bio)}</textarea></label>
-        </div>
-        <div class="stack-actions" style="margin-top:24px;">
-          <button type="button" class="button button-primary" data-action="save-teacher-edit">Save Changes</button>
-        </div>
-      </section>
-    `;
     document.body.append(modal);
   }
 
@@ -924,20 +902,6 @@
       }
     }
 
-    if (action === "open-edit-teacher") renderEditTeacher();
-    if (action === "save-teacher-edit") {
-      state.teacher = {
-        name: document.querySelector("#editTeacherName").value,
-        age: document.querySelector("#editTeacherAge").value,
-        specialization: document.querySelector("#editTeacherSpec").value,
-        level: document.querySelector("#editTeacherLevel").value,
-        bio: document.querySelector("#editTeacherBio").value
-      };
-      render();
-      setStatus("Teacher details updated locally.");
-      document.querySelector(".modal-backdrop")?.remove();
-    }
-
     if (action === "open-add-class") renderAddClass();
     if (action === "save-new-class") {
       const level = document.querySelector("#addClassLevel").value;
@@ -1025,6 +989,7 @@
       }
       adjustNameColumnWidth();
     }
+    if (input.dataset.teacher !== undefined) { state.teacher[input.dataset.teacher] = input.value; }
     if (input.dataset.periodName !== undefined) { currentPeriod().name = input.value; }
     if (input.dataset.date) { currentPeriod()[`${input.dataset.date}Dates`][Number(input.dataset.index)] = input.value; }
     if (input.dataset.score) {
@@ -1101,7 +1066,10 @@
     }
   });
 
-  app.addEventListener("change", (event) => { if (event.target.id === "photoInput") handlePhoto(event.target.files[0]); });
+  app.addEventListener("change", (event) => {
+    if (event.target.id === "photoInput") handlePhoto(event.target.files[0]);
+    if (event.target.dataset.teacher !== undefined) { state.teacher[event.target.dataset.teacher] = event.target.value; }
+  });
   
   function initApp() {
     render();
