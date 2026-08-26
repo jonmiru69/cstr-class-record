@@ -3,13 +3,11 @@
 
   const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode } = window.CSTRGrading;
   
-  // Revision 3: Allowing multiple accounts
   const VALID_LOGINS = ["harty342002", "maamsamcstr1234"];
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
   const app = document.querySelector("#app");
 
-  // Default initial registry fallback
   const DEFAULT_REGISTRY = [
     { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science - Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
     { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science - Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
@@ -26,7 +24,6 @@
   let activePeriodIndex = 0;
   let state = createInitialState();
 
-  // Security & Sync Interlocks
   let isDataLoaded = false;
   let isLoading = false;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
@@ -52,18 +49,24 @@
     return {
       version: 2,
       photo: "",
+      teacher: {
+        name: "Juan Dela Cruz",
+        age: "25",
+        specialization: "Science and Research",
+        level: "Secondary",
+        bio: "Full-time faculty member and research adviser."
+      },
       registry: JSON.parse(JSON.stringify(DEFAULT_REGISTRY)),
       sections: Object.fromEntries(DEFAULT_REGISTRY.map((section) => [section.id, { periods: [initialPeriod(section)] }]))
     };
   }
 
-  // Revision 1 & 3: Normalizing data robustly to prevent wiping and correctly sync lengths
   function normalizeState(saved) {
     const base = createInitialState();
     if (!saved || typeof saved !== "object") return base;
     base.photo = typeof saved.photo === "string" ? saved.photo : "";
+    base.teacher = saved.teacher && typeof saved.teacher === "object" ? saved.teacher : base.teacher;
     
-    // Restore saved section registry if it exists, otherwise adapt to default
     if (Array.isArray(saved.registry) && saved.registry.length > 0) {
       base.registry = JSON.parse(JSON.stringify(saved.registry));
     }
@@ -78,7 +81,6 @@
       }
 
       base.sections[section.id].periods = loaded.periods.map((period) => {
-        // Dynamically measure lengths to prevent wiping existing data arrays
         const wwLen = Array.isArray(period.wwDates) ? period.wwDates.length : 10;
         const ptLen = Array.isArray(period.ptDates) ? period.ptDates.length : 8;
         const qaLen = Array.isArray(period.qaDates) ? period.qaDates.length : 3;
@@ -205,13 +207,12 @@
 
   function renderApp() {
     const content = currentView === "home" ? renderHome() : currentView === "chooser" ? renderClassRecord() : renderSectionRecord();
-    const currentUser = sessionStorage.getItem("cstr-class-record-user");
     return `<header class="app-header"><div class="app-header-inner">
       <div class="app-header-brand">
         <span class="header-logo"><img src="ASSETS/cstr-logo.png" alt="Colegio de Sto. Tomás – Recoletos crest"></span>
         <div><p class="eyebrow">CSTR • San Carlos City, Negros Occidental</p>
         <h1 class="app-title">Colegio de Sto. Tomás – Recoletos, Incorporated</h1>
-        <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026. Logged in as: <strong>${currentUser === "harty342002" ? "Sir Harty" : "Ma'am Sam"}</strong></p></div>
+        <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026.</p></div>
       </div>
       <div class="header-actions-wrap">
         <div class="header-actions">${button("💾 Save Changes", "save-changes", "button button-primary", `id="saveChanges"`)} ${button("Settings", "open-settings")} ${button("Log out", "logout")}</div>
@@ -232,22 +233,47 @@
     const portrait = state.photo ? `<img class="profile-photo" src="${state.photo}" alt="Teacher portrait">` : `<span class="silhouette" aria-hidden="true"></span><span class="photo-caption">Upload photo</span>`;
     return `<section class="home-grid"><div><input id="photoInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
       <button class="photo-frame" type="button" data-action="choose-photo" aria-label="Upload teacher photo">${portrait}</button></div>
-      <div><p class="eyebrow">Class record owner</p><p class="teacher-block">Class record by full-time faculty member, Junior High School Science and Research teacher, Senior High School Physics and General Science teacher and Research adviser.</p>
-      <div class="home-cta">${button("Proceed to Class Record →", "go-records", "button button-primary")}</div>
-      <p id="photoNote" class="form-note">Photo uploads accept PNG and JPEG files only.</p></div></section>`;
+      <div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <p class="eyebrow" style="margin: 0;">Class record owner</p>
+          <button type="button" class="kebab-btn" data-action="open-edit-teacher" aria-label="Edit Teacher" style="border: none; background: transparent; font-size: 1.5rem; cursor: pointer; color: var(--text);">⋮</button>
+        </div>
+        <p class="teacher-block" style="font-size: 1.05rem; line-height: 1.6;">
+          <strong><em>Name: ${escapeHtml(state.teacher.name)}</em></strong><br>
+          <strong><em>Age: ${escapeHtml(state.teacher.age)}</em></strong><br>
+          <strong><em>Specialization: ${escapeHtml(state.teacher.specialization)}</em></strong><br>
+          <strong><em>Level: ${escapeHtml(state.teacher.level)}</em></strong><br><br>
+          <strong><em>${escapeHtml(state.teacher.bio)}</em></strong>
+        </p>
+        <div class="home-cta">${button("Proceed to Class Record →", "go-records", "button button-primary")}</div>
+        <p id="photoNote" class="form-note">Photo uploads accept PNG and JPEG files only.</p>
+      </div></section>`;
   }
 
   function renderClassRecord() {
     const edge = (group) => group === "JHS" ? `<span class="level-edge edge-green"></span><span class="level-edge edge-yellow"></span><span class="level-edge edge-red"></span><span class="level-edge edge-blue"></span>` : `<span class="level-edge edge-charcoal"></span><span class="level-edge edge-baby-blue"></span><span class="level-edge edge-deep-red"></span>`;
     const groupCards = ["JHS", "SHS"].map((group) => `<button type="button" class="level-card level-card-${group.toLowerCase()} ${activeGroup === group ? "is-active" : ""}" data-action="select-group" data-group="${group}">${edge(group)}<span class="level-card-kicker">${group}</span><strong>${group === "JHS" ? "Junior High School" : "Senior High School"}</strong><small>Choose a level to view its sections</small></button>`).join("");
     const sections = state.registry.filter((section) => section.group === activeGroup);
-    // Revision 2: Added Kebab Menu Edit Buttons wrapped around section cards
+    
     const sectionCards = sections.map((section) => `
-      <div class="section-card-wrap">
-        <button type="button" class="kebab-btn" data-action="open-edit-section" data-section="${section.id}" aria-label="Edit Section">⋮</button>
-        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>
+      <div class="section-card-wrap" style="position: relative;">
+        <button type="button" class="kebab-btn" data-action="open-edit-section" data-section="${section.id}" aria-label="Edit Section" style="position: absolute; top: 12px; right: 12px; z-index: 10; border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">⋮</button>
+        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}" style="width: 100%;"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong><small>Open grade sheet</small></button>
       </div>`).join("");
-    return `<section class="record-chooser"><div class="section-heading"><div><p class="eyebrow">Class Record</p><h2>Select a level and section</h2><p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p></div></div><div class="level-grid" aria-label="School levels">${groupCards}</div><div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div><div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div></section>`;
+      
+    return `<section class="record-chooser">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Class Record</p>
+          <h2>Select a level and section</h2>
+          <p class="muted">Choose a school level first, then open the specific section. Grade sheets stay hidden until a section is selected.</p>
+        </div>
+        ${button("+ Add Class", "open-add-class", "button button-primary")}
+      </div>
+      <div class="level-grid" aria-label="School levels">${groupCards}</div>
+      <div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div>
+      <div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div>
+    </section>`;
   }
 
   function renderSectionRecord() {
@@ -283,7 +309,6 @@
     }).join("");
     const { numbering } = computeLearnerNumbering(period.roster);
     
-    // Calculate dynamic colspan counts for Revision 1
     const wwLen = period.wwDates.length;
     const ptLen = period.ptDates.length;
     const qaLen = period.qaDates.length;
@@ -415,7 +440,64 @@
     document.body.append(modal);
   }
 
-  // Revision 2 Modal Output for Section Edit
+  function renderEditTeacher() {
+    const t = state.teacher;
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop";
+    modal.innerHTML = `
+      <section class="modal" role="dialog">
+        <div class="section-heading">
+          <div><p class="eyebrow">Owner Settings</p><h2>Edit Teacher Info</h2></div>
+          ${button("Close", "close-modal")}
+        </div>
+        <div class="settings-grid" style="margin-top: 15px;">
+          <label>Name <input id="editTeacherName" value="${safeValue(t.name)}"></label>
+          <label>Age <input id="editTeacherAge" type="number" value="${safeValue(t.age)}"></label>
+          <label>Specialization <input id="editTeacherSpec" value="${safeValue(t.specialization)}"></label>
+          <label>Level 
+            <select id="editTeacherLevel">
+              <option value="Elementary" ${t.level === "Elementary" ? "selected" : ""}>Elementary</option>
+              <option value="Secondary" ${t.level === "Secondary" ? "selected" : ""}>Secondary</option>
+            </select>
+          </label>
+          <label>Bio <textarea id="editTeacherBio" style="width:100%; min-height:80px; padding:10px; border:1px solid var(--border); border-radius:8px;">${safeValue(t.bio)}</textarea></label>
+        </div>
+        <div class="stack-actions" style="margin-top:24px;">
+          <button type="button" class="button button-primary" data-action="save-teacher-edit">Save Changes</button>
+        </div>
+      </section>
+    `;
+    document.body.append(modal);
+  }
+
+  function renderAddClass() {
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop";
+    modal.innerHTML = `
+      <section class="modal" role="dialog">
+        <div class="section-heading">
+          <div><p class="eyebrow">Class Record</p><h2>Add New Class</h2></div>
+          ${button("Close", "close-modal")}
+        </div>
+        <div class="settings-grid" style="margin-top: 15px;">
+          <label>Grade Level <input id="addClassLevel" placeholder="e.g. Grade 11"></label>
+          <label>Subject <input id="addClassSubject" placeholder="e.g. General Science"></label>
+          <label>Color Code Theme
+            <select id="addClassTheme">
+              ${["black","brown","red","blue","green","yellow","purple","orange","pink","gray"].map(c => 
+                `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`
+              ).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="stack-actions" style="margin-top:24px;">
+          <button type="button" class="button button-primary" data-action="save-new-class">Create Class</button>
+        </div>
+      </section>
+    `;
+    document.body.append(modal);
+  }
+
   function renderEditSection(sectionId) {
     const section = state.registry.find(s => s.id === sectionId);
     if (!section) return;
@@ -562,7 +644,7 @@
       
       const parsedGist = JSON.parse(content || "{}");
       const currentUser = sessionStorage.getItem("cstr-class-record-user");
-      // Gracefully find the current user's data object, or fallback if unkeyed root JSON is present
+      
       const ownedData = parsedGist && typeof parsedGist === "object" && parsedGist[currentUser]
         ? parsedGist[currentUser]
         : (parsedGist.version ? parsedGist : {});
@@ -784,7 +866,6 @@
     if (!target) return;
     const action = target.dataset.action;
     
-    // Login Verification Revision
     if (action === "login") {
       const password = document.querySelector("#loginPassword").value;
       const error = document.querySelector("#loginError");
@@ -803,7 +884,6 @@
       }
     }
     
-    // Revision 1 Buttons for Columns
     if (action === "add-col") {
       const kind = target.dataset.kind; 
       const period = currentPeriod();
@@ -823,7 +903,41 @@
       }
     }
 
-    // Revision 2 Modals Handlers
+    if (action === "open-edit-teacher") renderEditTeacher();
+    if (action === "save-teacher-edit") {
+      state.teacher = {
+        name: document.querySelector("#editTeacherName").value,
+        age: document.querySelector("#editTeacherAge").value,
+        specialization: document.querySelector("#editTeacherSpec").value,
+        level: document.querySelector("#editTeacherLevel").value,
+        bio: document.querySelector("#editTeacherBio").value
+      };
+      render();
+      setStatus("Teacher details updated locally.");
+      document.querySelector(".modal-backdrop")?.remove();
+    }
+
+    if (action === "open-add-class") renderAddClass();
+    if (action === "save-new-class") {
+      const level = document.querySelector("#addClassLevel").value;
+      const subject = document.querySelector("#addClassSubject").value;
+      const theme = document.querySelector("#addClassTheme").value;
+      
+      const isSHS = String(level).includes("11") || String(level).includes("12");
+      const group = isSHS ? "SHS" : "JHS";
+      
+      const newId = "class-" + Date.now();
+      const newClass = { id: newId, group, level, subject, weights: [20, 50, 30], theme, accent: theme, rosterSize: 42 };
+      
+      state.registry.push(newClass);
+      state.sections[newId] = { periods: [initialPeriod(newClass)] };
+      activeGroup = group;
+      activeSectionId = newId;
+      render();
+      setStatus("New class created successfully.");
+      document.querySelector(".modal-backdrop")?.remove();
+    }
+
     if (action === "open-edit-section") renderEditSection(target.dataset.section);
     if (action === "close-modal") document.querySelector(".modal-backdrop")?.remove();
     if (action === "save-section-edit") {
@@ -834,6 +948,10 @@
         const theme = document.querySelector("#editSectionTheme").value;
         section.theme = theme;
         section.accent = theme;
+        
+        const isSHS = String(section.level).includes("11") || String(section.level).includes("12");
+        section.group = isSHS ? "SHS" : "JHS";
+        
         render();
         setStatus("Section details modified locally. Do not forget to save changes.");
       }
