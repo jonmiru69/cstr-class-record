@@ -1,7 +1,20 @@
 (() => {
   "use strict";
 
-  const { calculateComponent, calculateQuarterlyAssessment, calculateInitialGrade, format, hasRawAboveHps, isAttendanceCode, isZeroScoreCode, isExcludedCode } = window.CSTRGrading;
+  const {
+    calculateComponent,
+    calculateQuarterlyAssessment,
+    calculateInitialGrade,
+    format,
+    hasRawAboveHps,
+    isAttendanceCode,
+    isZeroScoreCode,
+    isExcludedCode,
+    SUBJECT_PRESETS,
+    matchSubjectWeights,
+    transmuteGrade,
+    getGradeDescriptor
+  } = window.CSTRGrading;
   
   const VALID_LOGINS = ["harty342002", "maamsamcstr1234"];
   const GIST_ID_KEY = "cstr-class-record-gist-id";
@@ -9,19 +22,20 @@
   const app = document.querySelector("#app");
 
   const DEFAULT_REGISTRY = [
-    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42 },
-    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42 },
-    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42 },
-    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III", section: "Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42 },
-    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42 },
-    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42 },
-    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42 }
+    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42, archived: false },
+    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42, archived: false },
+    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42, archived: false },
+    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III", section: "Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42, archived: false },
+    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42, archived: false },
+    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42, archived: false },
+    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42, archived: false }
   ];
 
   let currentView = "home";
   let activeGroup = "JHS";
   let activeSectionId = DEFAULT_REGISTRY[0].id;
   let activePeriodIndex = 0;
+  let archiveFilter = "active"; // "active" | "archived"
   let state = createInitialState();
 
   let isDataLoaded = false;
@@ -85,6 +99,12 @@
         entry.section = "";
       }
     }
+    if (typeof entry.archived !== "boolean") {
+      entry.archived = false;
+    }
+    if (!Array.isArray(entry.weights) || entry.weights.length !== 3) {
+      entry.weights = matchSubjectWeights(entry.subject);
+    }
     return entry;
   }
 
@@ -145,6 +165,38 @@
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
   function button(label, action, className = "button", extra = "") { return `<button type="button" class="${className}" data-action="${action}" ${extra}>${label}</button>`; }
+
+  function themeColorHex(name) {
+    const shades = {
+      purple: "#7763a4",
+      green: "#3c8a58",
+      blue: "#2980b9",
+      red: "#c0392b",
+      charcoal: "#374151",
+      "baby-blue": "#2587be",
+      "deep-red": "#87232b",
+      black: "#1f2937",
+      brown: "#8b4513",
+      orange: "#d35400",
+      pink: "#d81b60",
+      gray: "#546e7a",
+      yellow: "#b78103"
+    };
+    return shades[name] || shades.blue;
+  }
+
+  function renderDescriptorBadge(descriptor) {
+    if (!descriptor || descriptor === "—") return `<span class="descriptor-empty">—</span>`;
+    const clsMap = {
+      "Advancing": "desc-advancing",
+      "Benchmarking": "desc-benchmarking",
+      "Connecting": "desc-connecting",
+      "Developing": "desc-developing",
+      "Emerging": "desc-emerging"
+    };
+    const cls = clsMap[descriptor] || "";
+    return `<span class="descriptor-badge ${cls}">${escapeHtml(descriptor)}</span>`;
+  }
 
   function getLearnerCategory(name) {
     if (typeof name !== "string") return null;
@@ -209,15 +261,31 @@
     document.querySelectorAll(".name-cell input").forEach((input) => {
       if (input.value.length > maxLen) maxLen = input.value.length;
     });
-    const newWidth = Math.max(180, Math.ceil(maxLen * 8.8 + 36));
+    const newWidth = Math.max(220, Math.ceil(maxLen * 8.8 + 36));
     document.documentElement.style.setProperty("--name-col-width", `${newWidth}px`);
   }
 
+  // Smooth jitter-free header scrolling with hysteresis
+  let isHeaderShrunk = false;
+  let scrollTicking = false;
+
   function updateHeaderScroll() {
-    const header = document.querySelector(".app-header");
-    if (!header) return;
-    if (window.scrollY > 30) header.classList.add("header-shrunk");
-    else header.classList.remove("header-shrunk");
+    if (scrollTicking) return;
+    scrollTicking = true;
+    requestAnimationFrame(() => {
+      const header = document.querySelector(".app-header");
+      if (header) {
+        const top = window.scrollY || document.documentElement.scrollTop;
+        if (!isHeaderShrunk && top > 60) {
+          isHeaderShrunk = true;
+          header.classList.add("header-shrunk");
+        } else if (isHeaderShrunk && top < 20) {
+          isHeaderShrunk = false;
+          header.classList.remove("header-shrunk");
+        }
+      }
+      scrollTicking = false;
+    });
   }
 
   window.addEventListener("scroll", updateHeaderScroll, { passive: true });
@@ -246,13 +314,40 @@
   }
 
   function renderLogin() {
-    return `<section class="login-screen"><div class="card">
-      <p class="eyebrow">CSTR Class Record</p><h1>Owner login</h1>
-      <p class="muted">This convenience gate is for the class-record owner. It is not a substitute for secure authentication.</p>
-      <label class="field-label">Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
-      ${button("Login", "login", "button button-primary")}
-      <p id="loginError" class="login-error" role="alert"></p>
-    </div></section>`;
+    return `<section class="login-screen">
+      <form id="loginForm" class="login-card" autocomplete="on">
+        <p class="eyebrow">CSTR Class Record</p>
+        <h1>Owner login</h1>
+        <p class="muted">This convenience gate is for the class-record owner. It is not a substitute for secure authentication.</p>
+        <label class="field-label">Password
+          <input id="loginPassword" type="password" autocomplete="current-password" required autofocus placeholder="Enter password...">
+        </label>
+        <button type="submit" class="button button-primary" data-action="login" style="width: 100%; margin-top: 8px;">Login</button>
+        <p id="loginError" class="login-error" role="alert"></p>
+      </form>
+    </section>`;
+  }
+
+  function performLogin() {
+    const passwordInput = document.querySelector("#loginPassword");
+    const password = passwordInput ? passwordInput.value.trim() : "";
+    const error = document.querySelector("#loginError");
+    if (VALID_LOGINS.includes(password)) { 
+      sessionStorage.setItem("cstr-class-record-login", "true");
+      sessionStorage.setItem("cstr-class-record-user", password);
+      render(); 
+      if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
+        loadFromGist(); 
+      } else {
+        isDataLoaded = true;
+        syncSaveControl();
+      }
+    } else { 
+      if (error) {
+        error.textContent = "Incorrect password. Please try again."; 
+        error.classList.add("error");
+      }
+    }
   }
 
   function renderApp() {
@@ -314,13 +409,31 @@
   function renderClassRecord() {
     const edge = (group) => group === "JHS" ? `<span class="level-edge edge-green"></span><span class="level-edge edge-yellow"></span><span class="level-edge edge-red"></span><span class="level-edge edge-blue"></span>` : `<span class="level-edge edge-charcoal"></span><span class="level-edge edge-baby-blue"></span><span class="level-edge edge-deep-red"></span>`;
     const groupCards = ["JHS", "SHS"].map((group) => `<button type="button" class="level-card level-card-${group.toLowerCase()} ${activeGroup === group ? "is-active" : ""}" data-action="select-group" data-group="${group}">${edge(group)}<span class="level-card-kicker">${group}</span><strong>${group === "JHS" ? "Junior High School" : "Senior High School"}</strong><small>Choose a level to view its sections</small></button>`).join("");
-    const sections = state.registry.filter((section) => section.group === activeGroup);
     
-    const sectionCards = sections.map((section) => `
-      <div class="section-card-wrap" style="position: relative;">
-        <button type="button" class="kebab-btn" data-action="open-edit-section" data-section="${section.id}" aria-label="Edit Section" style="position: absolute; top: 12px; right: 12px; z-index: 10; border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">⋮</button>
-        <button type="button" class="section-card accent-${section.accent}" data-action="select-section" data-section="${section.id}" style="width: 100%;"><span>${escapeHtml(section.level)}</span><strong>${escapeHtml(section.subject)}</strong>${section.section ? `<em class="section-card-section">${escapeHtml(section.section)}</em>` : ""}<small>Open grade sheet</small></button>
-      </div>`).join("");
+    const groupSections = state.registry.filter((section) => section.group === activeGroup);
+    const activeCount = groupSections.filter((section) => !section.archived).length;
+    const archivedCount = groupSections.filter((section) => Boolean(section.archived)).length;
+    
+    const visibleSections = groupSections.filter((section) => archiveFilter === "archived" ? Boolean(section.archived) : !section.archived);
+
+    const sectionCards = visibleSections.length > 0 ? visibleSections.map((section) => `
+      <div class="section-card-wrap">
+        <button type="button" class="kebab-btn" data-action="open-edit-section" data-section="${section.id}" aria-label="Edit or Archive Section">⋮</button>
+        <button type="button" class="section-card accent-${section.accent || section.theme}" data-action="select-section" data-section="${section.id}">
+          <div class="section-card-header">
+            <span class="card-level-badge">${escapeHtml(section.level)}</span>
+            ${section.archived ? `<span class="card-archived-badge">📦 Archived</span>` : ""}
+          </div>
+          <strong>${escapeHtml(section.subject)}</strong>
+          ${section.section ? `<span class="section-card-section">${escapeHtml(section.section)}</span>` : ""}
+          <div class="section-card-weights">
+            <span class="weight-pill">WW: ${section.weights[0]}%</span>
+            <span class="weight-pill">PT: ${section.weights[1]}%</span>
+            <span class="weight-pill">EX: ${section.weights[2]}%</span>
+          </div>
+          <small>Open grade sheet &rarr;</small>
+        </button>
+      </div>`).join("") : `<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--muted); background: #fff; border: 1.5px dashed var(--border); border-radius: 12px;">No ${archiveFilter === "archived" ? "archived" : "active"} ${activeGroup} classes found.</div>`;
       
     return `<section class="record-chooser">
       <div class="section-heading">
@@ -332,7 +445,16 @@
         ${button("+ Add Class", "open-add-class", "button button-primary")}
       </div>
       <div class="level-grid" aria-label="School levels">${groupCards}</div>
-      <div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"}</span></div>
+      
+      <div class="archive-toggle-bar">
+        <div class="archive-pills">
+          <button type="button" class="archive-pill" data-action="set-archive-filter" data-filter="active" aria-selected="${archiveFilter === "active"}">Active Classes (${activeCount})</button>
+          <button type="button" class="archive-pill" data-action="set-archive-filter" data-filter="archived" aria-selected="${archiveFilter === "archived"}">📦 Archived Classes (${archivedCount})</button>
+        </div>
+        ${archiveFilter === "archived" ? `<span style="font-size:0.8rem;color:var(--muted);">Showing archived records. Stored safely for future reference.</span>` : ""}
+      </div>
+
+      <div class="chooser-divider"><span>${activeGroup === "JHS" ? "Junior High School sections" : "Senior High School sections"} (${archiveFilter === "archived" ? "Archived" : "Active"})</span></div>
       <div class="section-card-grid" aria-label="${activeGroup} sections">${sectionCards}</div>
     </section>`;
   }
@@ -345,12 +467,37 @@
     const { totalLearners } = computeLearnerNumbering(period.roster);
     const periodTabs = periods.map((entry, index) => `<button type="button" class="tab theme-${section.theme}" data-action="select-period" data-period="${index}" aria-selected="${activePeriodIndex === index}">${escapeHtml(entry.name)}</button>`).join("");
     
-    return `<div class="record-section"><div class="record-back">${button("← Back to sections", "go-records")}</div>
-      <div class="section-heading"><div>
-        <div class="section-title-wrap"><h2>${escapeHtml(section.subject)}</h2><span id="liveLearnerCount" class="learner-count-badge">${totalLearners} Learner${totalLearners === 1 ? "" : "s"}</span></div>
-        ${section.section ? `<p class="section-subtitle">${escapeHtml(section.section)}</p>` : ""}
-        <div class="record-meta"><span><strong>${section.level}</strong></span><span>Weights: <strong>${section.weights.join(" / ")}</strong></span><span>Roster capacity: <strong>${section.rosterSize}</strong></span></div>
-      </div></div>
+    const sectionColorHex = themeColorHex(section.accent || section.theme);
+
+    return `<div class="record-section">
+      <div class="record-back">${button("← Back to sections", "go-records")}</div>
+      
+      <div class="section-accent-bar" style="--section-accent-color: ${sectionColorHex}; background: ${sectionColorHex};"></div>
+      
+      <div class="class-header-card">
+        ${section.archived ? `<div class="archive-banner"><span>📦 This class record is currently archived in storage.</span><button type="button" class="button button-secondary" data-action="unarchive-section" data-section="${section.id}">Restore Class</button></div>` : ""}
+        <div class="class-header-top">
+          <div class="section-title-wrap">
+            <h2>${escapeHtml(section.subject)}</h2>
+            <span id="liveLearnerCount" class="learner-count-badge">${totalLearners} Learner${totalLearners === 1 ? "" : "s"}</span>
+            ${section.archived ? `<span class="card-archived-badge">Archived</span>` : ""}
+          </div>
+          <div>
+            <label style="font-size:0.82rem; font-weight:700; color:var(--muted); margin-right:6px;" for="sheetSubjectSelect">Grading System / Subject:</label>
+            <select id="sheetSubjectSelect" class="subject-interactive-select" data-action="change-sheet-subject" title="Click to assign or change subject and weight distribution">
+              ${SUBJECT_PRESETS.map(p => `<option value="${p.name}" ${section.subject === p.name ? "selected" : ""}>${p.label}</option>`).join("")}
+              <option value="custom" ${!SUBJECT_PRESETS.some(p => p.name === section.subject) ? "selected" : ""}>Other / Custom (${section.weights.join("/")}%)</option>
+            </select>
+          </div>
+        </div>
+        ${section.section ? `<p class="section-subtitle" style="margin: 4px 0 0; font-weight:600; color:#475569;">Section: ${escapeHtml(section.section)}</p>` : ""}
+        <div class="class-header-meta">
+          <span>Level: <strong>${section.level}</strong></span>
+          <span>Weights: <strong>WW ${section.weights[0]}% | PT ${section.weights[1]}% | EX ${section.weights[2]}%</strong></span>
+          <span>Roster capacity: <strong>${section.rosterSize}</strong></span>
+        </div>
+      </div>
+
       <div class="period-tabs" aria-label="Grading period tabs">${periodTabs}</div>
       <div class="period-toolbar"><label for="periodName">Period name</label><input id="periodName" class="period-name" value="${safeValue(period.name)}" data-period-name>
       ${button("+ Add Grading Period", "add-period", "button button-yellow")} ${button("⇩ Print-ready Excel", "export-excel", "button button-primary")}</div>
@@ -408,6 +555,8 @@
           <button type="button" class="col-btn" data-action="remove-col" data-kind="qa" title="Remove Column">-</button>
         </th>
         <th class="initial-header" scope="col" rowspan="3">Initial<br>Grade</th>
+        <th class="transmuted-header" scope="col" rowspan="3">Final Transmuted<br>Grade</th>
+        <th class="descriptor-header" scope="col" rowspan="3">Qualitative<br>Descriptor</th>
       </tr>
       <tr class="activity-row">
         ${dateHeaders("ww", period.wwDates)}<th class="component-summary component-ww" scope="col">Total WW</th><th class="component-summary component-ww" scope="col">PS</th><th class="component-summary component-ww" scope="col">WS<br>(${section.weights[0]}%)</th>
@@ -423,7 +572,7 @@
         <th colspan="2" scope="row">Enter HPS</th>
         ${hpsInputs("ww", period.wwHps)}<td colspan="3">&nbsp;</td>
         ${hpsInputs("pt", period.ptHps)}<td colspan="3">&nbsp;</td>
-        ${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td>&nbsp;</td>
+        ${hpsInputs("qa", period.qaHps)}<td colspan="3">&nbsp;</td><td colspan="3">&nbsp;</td>
       </tr>
       </thead><tbody>${rows}</tbody></table></div>`;
   }
@@ -440,7 +589,7 @@
       return `<td class="${tdBorderClass}"><input class="${inputClasses}" type="text" inputmode="text" maxlength="6" autocomplete="off" data-score="${kind}" data-row="${rowIndex}" data-index="${index}" value="${safeValue(cat ? "" : value)}" ${cat ? 'disabled tabindex="-1"' : ''} title="Enter a numeric score, or A (Absent, scored 0/HPS), E (Excused, excluded), L (Late, excluded), M (Missing, no excuse, scored 0/HPS)" aria-label="Learner ${rowIndex + 1} ${kind.toUpperCase()} ${index + 1}"></td>`;
     }).join("");
     const result = learnerResult(learner, period, section.weights);
-    return `<tr class="${catClass}" data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${numDisplay !== undefined ? numDisplay : ""}</th><td class="name-cell" style="--section-name-bg:${nameShade.background};--section-name-color:${nameShade.color};"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td></tr>`;
+    return `<tr class="${catClass}" data-learner-row="${rowIndex}"><th class="number-cell" scope="row">${numDisplay !== undefined ? numDisplay : ""}</th><td class="name-cell" style="--section-name-bg:${nameShade.background};--section-name-color:${nameShade.color};"><input class="text-input" data-name-row="${rowIndex}" value="${safeValue(learner.name)}" aria-label="Learner ${rowIndex + 1} name"></td>${scoreInputs("ww", learner.ww, period.wwHps)}${summaryCells(result, "ww")}${scoreInputs("pt", learner.pt, period.ptHps)}${summaryCells(result, "pt")}${scoreInputs("qa", learner.qa, period.qaHps)}${summaryCells(result, "qa")}<td class="summary-cell initial-cell summary-initial">${format(result.initial.rounded, 0)}</td><td class="summary-cell transmuted-cell summary-transmuted">${format(result.initial.transmuted, 0)}</td><td class="summary-cell descriptor-cell summary-descriptor">${renderDescriptorBadge(result.initial.descriptor)}</td></tr>`;
   }
 
   function learnerResult(learner, period, weights) {
@@ -532,9 +681,6 @@
     const last = excelColumn(startCol + length - 1);
     const scores = `${first}${excelRow}:${last}${excelRow}`;
     const hps = `${first}$${hpsRow}:${last}$${hpsRow}`;
-    // A cell counts toward the ratio if it holds a number, OR it is coded A (Absent) or M
-    // (Missing, no excuse) - those two codes score as zero against that item's HPS.
-    // E (Excused) and L (Late) stay excluded entirely, same as a blank cell.
     const counted = `(ISNUMBER(${scores})+(UPPER(${scores})="A")+(UPPER(${scores})="M"))`;
     const valid = `SUMPRODUCT(${counted},--ISNUMBER(${hps}),--(${hps}>0))`;
     const raw = `SUMPRODUCT(N(${scores}),--ISNUMBER(${hps}),--(${hps}>0))`;
@@ -563,7 +709,9 @@
     const ptStart = wwStart + wwLen + 3;
     const qaStart = ptStart + ptLen + 3;
     const gradeCol = qaStart + qaLen + 3;
-    const lastCol = gradeCol;
+    const transmutedCol = gradeCol + 1;
+    const descriptorCol = gradeCol + 2;
+    const lastCol = descriptorCol;
     const headerRow = 5;
     const datesRow = 6;
     const hpsRow = 7;
@@ -572,8 +720,8 @@
     matrix[0][0] = "COLEGIO DE STO. TOMÁS – RECOLETOS, INCORPORATED";
     matrix[1][0] = "CLASS RECORD — PRINT-READY EXPORT";
     matrix[2][0] = `${section.level} • ${section.subject}${section.section ? ` • ${section.section}` : ""}`;
-    matrix[3][0] = `Grading period: ${period.name}`;
-    matrix[3][Math.max(2, lastCol - 2)] = `Teacher: ${state.teacher.name || ""}`;
+    matrix[3][0] = `Grading period: ${period.name} | Weights: WW ${section.weights[0]}% - PT ${section.weights[1]}% - EX ${section.weights[2]}%`;
+    matrix[3][Math.max(2, lastCol - 3)] = `Teacher: ${state.teacher.name || ""}`;
     matrix[headerRow - 1][0] = "#";
     matrix[headerRow - 1][1] = "Learner name";
     matrix[datesRow - 1][0] = "";
@@ -590,6 +738,9 @@
     writeComponentHeader(ptStart, ptLen, "PT", section.weights[1]);
     writeComponentHeader(qaStart, qaLen, "QA", section.weights[2]);
     matrix[headerRow - 1][gradeCol] = "Initial Grade";
+    matrix[headerRow - 1][transmutedCol] = "Final Transmuted Grade";
+    matrix[headerRow - 1][descriptorCol] = "Qualitative Descriptor";
+
     [[wwStart, period.wwDates, period.wwHps], [ptStart, period.ptDates, period.ptHps], [qaStart, period.qaDates, period.qaHps]].forEach(([start, dates, hps]) => {
       dates.forEach((value, index) => { matrix[datesRow - 1][start + index] = value || `Activity ${index + 1}`; });
       hps.forEach((value, index) => { matrix[hpsRow - 1][start + index] = excelValue(value); });
@@ -616,17 +767,27 @@
       });
       const wsCells = [excelColumn(wwStart + wwLen + 2), excelColumn(ptStart + ptLen + 2), excelColumn(qaStart + qaLen + 2)].map((col) => `${col}${excelRow}`);
       setFormula(`${excelColumn(gradeCol)}${excelRow}`, `IF(COUNT(${wsCells.join(",")})<3,"",ROUND(SUM(${wsCells.join(",")}),0))`, Number.isFinite(result.initial.rounded) ? result.initial.rounded : "", Number.isFinite(result.initial.rounded) ? "n" : "s");
+      
+      // Transmuted Grade and Descriptor
+      if (Number.isFinite(result.initial.transmuted)) {
+        worksheet[`${excelColumn(transmutedCol)}${excelRow}`] = { t: "n", v: result.initial.transmuted };
+        worksheet[`${excelColumn(descriptorCol)}${excelRow}`] = { t: "s", v: result.initial.descriptor };
+      } else {
+        worksheet[`${excelColumn(transmutedCol)}${excelRow}`] = { t: "s", v: "" };
+        worksheet[`${excelColumn(descriptorCol)}${excelRow}`] = { t: "s", v: "" };
+      }
     });
     const border = { style: "thin", color: { rgb: "B7C2CC" } };
-    const palette = { ww: "FFF0B3", pt: "D9EAF7", qa: "F7D3D0", gray: "EEF1F4", maroon: "6D1F32", gold: "D9A72E", navy: "1E3853" };
+    const palette = { ww: "FFF0B3", pt: "D9EAF7", qa: "F7D3D0", gray: "EEF1F4", maroon: "6D1F32", gold: "D9A72E", goldLight: "FBF0CD", navy: "1E3853" };
     const baseStyle = { font: { name: "Arial", sz: 9, color: { rgb: "1E293B" } }, alignment: { vertical: "center", horizontal: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } };
-    const fillFor = (col) => col >= wwStart && col < ptStart ? palette.ww : col >= ptStart && col < qaStart ? palette.pt : col >= qaStart && col <= gradeCol ? palette.qa : "FFFFFF";
+    const fillFor = (col) => col >= wwStart && col < ptStart ? palette.ww : col >= ptStart && col < qaStart ? palette.pt : col >= qaStart && col < gradeCol ? palette.qa : col === gradeCol ? palette.goldLight : col === transmutedCol ? "FDEBD0" : "FFFFFF";
+    
     for (let row = headerRow - 1; row < matrix.length; row += 1) {
       for (let col = 0; col <= lastCol; col += 1) {
         const address = `${excelColumn(col)}${row + 1}`;
         if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
-        worksheet[address].s = { ...baseStyle, fill: { fgColor: { rgb: row === hpsRow - 1 ? palette.gray : fillFor(col) }, patternType: "solid" }, alignment: { ...baseStyle.alignment, horizontal: col === 1 ? "left" : "center" } };
-        if (row >= firstLearnerRow - 1 && col > 1 && col !== gradeCol && (col === wwStart + wwLen || col === ptStart + ptLen || col === qaStart + qaLen)) worksheet[address].s.fill = { fgColor: { rgb: "F8FAFC" }, patternType: "solid" };
+        worksheet[address].s = { ...baseStyle, fill: { fgColor: { rgb: row === hpsRow - 1 ? palette.gray : fillFor(col) }, patternType: "solid" }, alignment: { ...baseStyle.alignment, horizontal: col === 1 || col === descriptorCol ? "left" : "center" } };
+        if (row >= firstLearnerRow - 1 && col > 1 && col < gradeCol && (col === wwStart + wwLen || col === ptStart + ptLen || col === qaStart + qaLen)) worksheet[address].s.fill = { fgColor: { rgb: "F8FAFC" }, patternType: "solid" };
       }
     }
     for (let row = 0; row < 4; row += 1) {
@@ -634,16 +795,19 @@
       worksheet[address].s = { font: { name: "Arial", sz: row === 0 ? 14 : 10, bold: true, color: { rgb: row < 2 ? "FFFFFF" : palette.navy } }, fill: { fgColor: { rgb: row < 2 ? palette.maroon : "FFFFFF" }, patternType: "solid" }, alignment: { vertical: "center", horizontal: "left" } };
     }
     worksheet[`${excelColumn(gradeCol)}${headerRow}`].s = { ...baseStyle, font: { ...baseStyle.font, bold: true }, fill: { fgColor: { rgb: palette.gold }, patternType: "solid" } };
+    worksheet[`${excelColumn(transmutedCol)}${headerRow}`].s = { ...baseStyle, font: { ...baseStyle.font, bold: true }, fill: { fgColor: { rgb: "F5B041" }, patternType: "solid" } };
+    worksheet[`${excelColumn(descriptorCol)}${headerRow}`].s = { ...baseStyle, font: { ...baseStyle.font, bold: true }, fill: { fgColor: { rgb: "E2E8F0" }, patternType: "solid" } };
+
     worksheet["!merges"] = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } },
       { s: { r: 1, c: 0 }, e: { r: 1, c: lastCol } },
       { s: { r: 2, c: 0 }, e: { r: 2, c: lastCol } },
-      { s: { r: 3, c: 0 }, e: { r: 3, c: Math.max(1, lastCol - 3) } },
+      { s: { r: 3, c: 0 }, e: { r: 3, c: Math.max(1, lastCol - 4) } },
       { s: { r: 4, c: wwStart }, e: { r: 4, c: wwStart + wwLen + 2 } },
       { s: { r: 4, c: ptStart }, e: { r: 4, c: ptStart + ptLen + 2 } },
       { s: { r: 4, c: qaStart }, e: { r: 4, c: qaStart + qaLen + 2 } }
     ];
-    worksheet["!cols"] = Array.from({ length: lastCol + 1 }, (_, col) => ({ wch: col === 0 ? 5 : col === 1 ? 30 : col === gradeCol ? 13 : 11 }));
+    worksheet["!cols"] = Array.from({ length: lastCol + 1 }, (_, col) => ({ wch: col === 0 ? 5 : col === 1 ? 28 : col === gradeCol ? 12 : col === transmutedCol ? 14 : col === descriptorCol ? 18 : 10 }));
     worksheet["!rows"] = Array.from({ length: matrix.length }, (_, row) => ({ hpt: row < 4 ? 20 : row < firstLearnerRow - 1 ? 28 : 19 }));
     worksheet["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true };
     worksheet["!margins"] = { left: 0.2, right: 0.2, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15 };
@@ -654,7 +818,7 @@
     workbook.Workbook = { CalcPr: { calcMode: "auto", fullCalcOnLoad: true, forceFullCalc: true } };
     const safeName = `${section.level}-${section.subject}-${section.section || "Section"}-${period.name}`.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
     XLSX.writeFile(workbook, `${safeName || "class-record"}.xlsx`, { cellStyles: true });
-    setStatus("Print-ready Excel file created with live formulas and paper layout settings.");
+    setStatus("Print-ready Excel file created with live formulas, Transmuted Grades, and Descriptors.");
   }
 
   function normalizedName(value) {
@@ -672,8 +836,6 @@
       const hpsPresent = hpsValue !== "" && hpsValue !== null && hpsValue !== undefined;
       const hps = Number(hpsValue);
       if (!hpsPresent || !Number.isFinite(hps) || hps <= 0) return false;
-      // Absent / Missing (no excuse) already resolve to a final zero score, so the
-      // requirement counts as fulfilled. Excused / Late remain pending (not yet complete).
       if (isZeroScoreCode(score)) return true;
       if (isExcludedCode(score)) return false;
       const raw = Number(score);
@@ -694,12 +856,34 @@
         matches.push({ section, period, learner, result, complete: isLearnerAssessmentComplete(learner, period) });
       });
     }));
-    if (!matches.length) { showSearchModal("No exact student-name match was found. Please check the complete name and try again."); return; }
+    if (!matches.length) { showSearchModal("No student matching '" + escapeHtml(query) + "' was found. Please verify the name and try again."); return; }
     const cards = matches.map(({ section, period, learner, result, complete }) => {
-      const grade = format(result.initial.rounded, 0);
-      const label = complete ? "Validated Initial Grade — Complete Requirements (No Transmutation Applied)" : "Current Initial Grade — Provisional (Requirements Incomplete)";
-      const note = complete ? "All entered WW, PT, and QA requirements are complete for this learner." : "This live grade updates as scores are entered; missing or incomplete requirements prevent validation.";
-      return `<article class="student-grade-result ${complete ? "grade-complete" : "grade-provisional"}"><p class="eyebrow">${escapeHtml(section.level)} &bull; ${escapeHtml(period.name)}</p><h3>${escapeHtml(learner.name)}</h3><p class="student-subject">${escapeHtml(section.subject)}${section.section ? ` — ${escapeHtml(section.section)}` : ""}</p><p class="student-grade-label">${label}</p><p class="student-grade">${grade}</p><p class="grade-status-note">${note}</p></article>`;
+      const initialGrade = format(result.initial.rounded, 0);
+      const transmutedGrade = format(result.initial.transmuted, 0);
+      const descriptor = result.initial.descriptor;
+      const label = complete ? "Validated Grade — Complete Requirements" : "Current Grade — Provisional (Incomplete Requirements)";
+      const note = complete ? "All entered WW, PT, and QA requirements are complete for this learner." : "This grade updates live as scores are entered; missing or incomplete requirements prevent final validation.";
+      return `<article class="student-grade-result ${complete ? "grade-complete" : "grade-provisional"}">
+        <p class="eyebrow">${escapeHtml(section.level)} &bull; ${escapeHtml(period.name)} ${section.archived ? "(Archived)" : ""}</p>
+        <h3>${escapeHtml(learner.name)}</h3>
+        <p class="student-subject">${escapeHtml(section.subject)}${section.section ? ` — ${escapeHtml(section.section)}` : ""}</p>
+        <div class="student-grade-grid">
+          <div class="student-grade-box">
+            <p class="student-grade-label">Initial Grade</p>
+            <p class="student-grade">${initialGrade}</p>
+          </div>
+          <div class="student-grade-box">
+            <p class="student-grade-label">Final Transmuted</p>
+            <p class="student-grade transmuted">${transmutedGrade}</p>
+          </div>
+          <div class="student-grade-box">
+            <p class="student-grade-label">Descriptor</p>
+            <div style="margin-top:6px;">${renderDescriptorBadge(descriptor)}</div>
+          </div>
+        </div>
+        <p class="student-grade-label" style="margin-top:12px;">${label}</p>
+        <p class="grade-status-note">${note}</p>
+      </article>`;
     }).join("");
     showSearchModal(cards, true);
   }
@@ -707,7 +891,7 @@
   function showSearchModal(message, isHtml = false) {
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
-    modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("Close", "close-search")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
+    modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("✕ Close", "close-modal")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
     document.body.append(modal);
   }
 
@@ -715,18 +899,30 @@
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
     modal.innerHTML = `
-      <section class="modal" role="dialog">
+      <section class="modal" role="dialog" aria-modal="true">
         <div class="section-heading">
           <div><p class="eyebrow">Class Record</p><h2>Add New Class</h2></div>
-          ${button("Close", "close-modal")}
+          ${button("✕ Close", "close-modal")}
         </div>
         <div class="settings-grid" style="margin-top: 15px;">
-          <label>Grade Level <input id="addClassLevel" placeholder="e.g. Grade 11"></label>
-          <label>Subject <input id="addClassSubject" placeholder="e.g. General Science"></label>
-          <label>Section <input id="addClassSection" placeholder="e.g. Saint Alfonso de Orozco"></label>
+          <label>Grade Level 
+            <input id="addClassLevel" placeholder="e.g. Grade 8 or Grade 11" value="${activeGroup === "SHS" ? "Grade 11" : "Grade 8"}">
+          </label>
+          <label>Subject / Grading Distribution
+            <select id="addClassSubjectPreset">
+              ${SUBJECT_PRESETS.map(p => `<option value="${p.name}">${p.label}</option>`).join("")}
+              <option value="custom">Other / Custom Subject...</option>
+            </select>
+          </label>
+          <label id="customSubjectWrap" style="display:none;">Custom Subject Name
+            <input id="addClassCustomSubject" placeholder="e.g. Robotics & Applied Technology">
+          </label>
+          <label>Section Name
+            <input id="addClassSection" placeholder="e.g. Saint Alfonso de Orozco">
+          </label>
           <label>Color Code Theme
             <select id="addClassTheme">
-              ${["black","brown","red","blue","green","yellow","purple","orange","pink","gray"].map(c => 
+              ${["purple","green","blue","red","charcoal","baby-blue","deep-red","yellow","orange","pink","gray","black","brown"].map(c => 
                 `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`
               ).join("")}
             </select>
@@ -738,6 +934,12 @@
       </section>
     `;
     document.body.append(modal);
+
+    const presetSelect = modal.querySelector("#addClassSubjectPreset");
+    const customWrap = modal.querySelector("#customSubjectWrap");
+    presetSelect.addEventListener("change", () => {
+      customWrap.style.display = presetSelect.value === "custom" ? "grid" : "none";
+    });
   }
 
   function renderEditSection(sectionId) {
@@ -745,30 +947,51 @@
     if (!section) return;
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
+    const isPreset = SUBJECT_PRESETS.some(p => p.name === section.subject);
+
     modal.innerHTML = `
-      <section class="modal" role="dialog">
+      <section class="modal" role="dialog" aria-modal="true">
         <div class="section-heading">
           <div><p class="eyebrow">Settings</p><h2>Edit Class Section</h2></div>
-          ${button("Close", "close-modal")}
+          ${button("✕ Close", "close-modal")}
         </div>
         <div class="settings-grid" style="margin-top: 15px;">
           <label>Grade Level <input id="editSectionLevel" value="${safeValue(section.level)}"></label>
-          <label>Subject <input id="editSectionSubject" value="${safeValue(section.subject)}"></label>
-          <label>Section <input id="editSectionSection" value="${safeValue(section.section)}" placeholder="e.g. Saint Alfonso de Orozco"></label>
+          <label>Subject / Grading Distribution
+            <select id="editSectionSubjectPreset">
+              ${SUBJECT_PRESETS.map(p => `<option value="${p.name}" ${section.subject === p.name ? "selected" : ""}>${p.label}</option>`).join("")}
+              <option value="custom" ${!isPreset ? "selected" : ""}>Other / Custom Subject...</option>
+            </select>
+          </label>
+          <label id="editCustomSubjectWrap" style="display:${isPreset ? "none" : "grid"};">Custom Subject Name
+            <input id="editSectionCustomSubject" value="${isPreset ? "" : safeValue(section.subject)}">
+          </label>
+          <label>Section Name <input id="editSectionSection" value="${safeValue(section.section)}" placeholder="e.g. Saint Alfonso de Orozco"></label>
           <label>Color Code Theme
             <select id="editSectionTheme">
-              ${["black","brown","red","blue","green","yellow","purple","orange","pink","gray"].map(c => 
-                `<option value="${c}" ${section.theme === c ? "selected" : ""}>${c.charAt(0).toUpperCase() + c.slice(1)}</option>`
+              ${["purple","green","blue","red","charcoal","baby-blue","deep-red","yellow","orange","pink","gray","black","brown"].map(c => 
+                `<option value="${c}" ${(section.accent || section.theme) === c ? "selected" : ""}>${c.charAt(0).toUpperCase() + c.slice(1)}</option>`
               ).join("")}
             </select>
           </label>
         </div>
-        <div class="stack-actions" style="margin-top:24px;">
+        <div class="stack-actions" style="margin-top:24px; justify-content:space-between; align-items:center;">
+          <div>
+            ${section.archived 
+              ? `<button type="button" class="button button-secondary" data-action="unarchive-section" data-section="${section.id}">📦 Restore Class</button>`
+              : `<button type="button" class="button button-secondary" data-action="archive-section" data-section="${section.id}">📦 Archive Class</button>`}
+          </div>
           <button type="button" class="button button-primary" data-action="save-section-edit" data-section="${section.id}">Save Changes</button>
         </div>
       </section>
     `;
     document.body.append(modal);
+
+    const presetSelect = modal.querySelector("#editSectionSubjectPreset");
+    const customWrap = modal.querySelector("#editCustomSubjectWrap");
+    presetSelect.addEventListener("change", () => {
+      customWrap.style.display = presetSelect.value === "custom" ? "grid" : "none";
+    });
   }
 
   function updateLiveSummary(rowIndex) {
@@ -778,16 +1001,23 @@
     const row = document.querySelector(`[data-learner-row="${rowIndex}"]`);
     if (!row) return;
     const result = learnerResult(learner, period, section.weights);
-    row.querySelector(".summary-ww-total").textContent = scoreTotal(result.ww);
-    row.querySelector(".summary-ww-ps").textContent = format(result.ww.percentage, 2);
-    row.querySelector(".summary-ww-ws").textContent = format(result.ww.weighted, 2);
-    row.querySelector(".summary-pt-total").textContent = scoreTotal(result.pt);
-    row.querySelector(".summary-pt-ps").textContent = format(result.pt.percentage, 2);
-    row.querySelector(".summary-pt-ws").textContent = format(result.pt.weighted, 2);
-    row.querySelector(".summary-qa-total").textContent = scoreTotal(result.qa);
-    row.querySelector(".summary-qa-ps").textContent = format(result.qa.percentage, 2);
-    row.querySelector(".summary-qa-ws").textContent = format(result.qa.weighted, 2);
-    row.querySelector(".summary-initial").textContent = format(result.initial.rounded, 0);
+    
+    const wwTot = row.querySelector(".summary-ww-total"); if (wwTot) wwTot.textContent = scoreTotal(result.ww);
+    const wwPs = row.querySelector(".summary-ww-ps"); if (wwPs) wwPs.textContent = format(result.ww.percentage, 2);
+    const wwWs = row.querySelector(".summary-ww-ws"); if (wwWs) wwWs.textContent = format(result.ww.weighted, 2);
+    
+    const ptTot = row.querySelector(".summary-pt-total"); if (ptTot) ptTot.textContent = scoreTotal(result.pt);
+    const ptPs = row.querySelector(".summary-pt-ps"); if (ptPs) ptPs.textContent = format(result.pt.percentage, 2);
+    const ptWs = row.querySelector(".summary-pt-ws"); if (ptWs) ptWs.textContent = format(result.pt.weighted, 2);
+    
+    const qaTot = row.querySelector(".summary-qa-total"); if (qaTot) qaTot.textContent = scoreTotal(result.qa);
+    const qaPs = row.querySelector(".summary-qa-ps"); if (qaPs) qaPs.textContent = format(result.qa.percentage, 2);
+    const qaWs = row.querySelector(".summary-qa-ws"); if (qaWs) qaWs.textContent = format(result.qa.weighted, 2);
+    
+    const initCell = row.querySelector(".summary-initial"); if (initCell) initCell.textContent = format(result.initial.rounded, 0);
+    const transCell = row.querySelector(".summary-transmuted"); if (transCell) transCell.textContent = format(result.initial.transmuted, 0);
+    const descCell = row.querySelector(".summary-descriptor"); if (descCell) descCell.innerHTML = renderDescriptorBadge(result.initial.descriptor);
+
     ["ww", "pt", "qa"].forEach((kind) => row.querySelectorAll(`[data-score="${kind}"]`).forEach((input) => {
       const index = Number(input.dataset.index);
       const cellValue = learner[kind][index];
@@ -911,14 +1141,12 @@
   function renderSettings() {
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
-    modal.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="section-heading"><div><p class="eyebrow">GitHub Gist sync</p><h2 id="settingsTitle">Settings</h2></div>${button("Close", "close-settings")}</div>
+    modal.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="section-heading"><div><p class="eyebrow">GitHub Gist sync</p><h2 id="settingsTitle">Settings</h2></div>${button("✕ Close", "close-modal")}</div>
       <div class="settings-grid"><label>Gist ID<input id="gistId" value="${safeValue(localStorage.getItem(GIST_ID_KEY) || "")}" autocomplete="off"></label><label>GitHub Personal Access Token<input id="gistToken" type="password" value="${safeValue(localStorage.getItem(GIST_TOKEN_KEY) || "")}" autocomplete="off"></label></div>
       <p class="settings-note">These credentials are stored only in this browser's localStorage. Do not commit a token to the repository. Each device needs its own credentials to read and save the shared Gist.</p>
       <div class="stack-actions">${button("Save credentials", "save-settings", "button button-primary")} ${button("Load saved data", "load-gist")}</div></section>`;
     document.body.append(modal);
   }
-
-  function closeSettings() { document.querySelector(".modal-backdrop")?.remove(); }
 
   function saveSettings() {
     const gistId = document.querySelector("#gistId").value.trim();
@@ -926,7 +1154,7 @@
     if (!gistId || !token) { setStatus("Both a Gist ID and Personal Access Token are required.", "error"); return; }
     localStorage.setItem(GIST_ID_KEY, gistId);
     localStorage.setItem(GIST_TOKEN_KEY, token);
-    closeSettings();
+    document.querySelector(".modal-backdrop")?.remove();
     setStatus("Settings saved. Auto-loading data now...");
     loadFromGist(); 
   }
@@ -1106,27 +1334,21 @@
     setStatus(`Cut ${bounds.maxRow - bounds.minRow + 1} rows × ${bounds.maxCol - bounds.minCol + 1} columns.`);
   });
 
+  // Login form submit listener (Enter key on form)
+  app.addEventListener("submit", (event) => {
+    if (event.target && event.target.id === "loginForm") {
+      event.preventDefault();
+      performLogin();
+    }
+  });
+
   document.addEventListener("click", (event) => {
     const target = event.target.closest("[data-action]");
     if (!target) return;
     const action = target.dataset.action;
     
     if (action === "login") {
-      const password = document.querySelector("#loginPassword").value;
-      const error = document.querySelector("#loginError");
-      if (VALID_LOGINS.includes(password)) { 
-        sessionStorage.setItem("cstr-class-record-login", "true");
-        sessionStorage.setItem("cstr-class-record-user", password);
-        render(); 
-        if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
-          loadFromGist(); 
-        } else {
-          isDataLoaded = true;
-          syncSaveControl();
-        }
-      } else { 
-        error.textContent = "Incorrect password. Please try again."; error.classList.add("error"); 
-      }
+      performLogin();
     }
     
     if (action === "add-col") {
@@ -1143,25 +1365,59 @@
     }
     if (action === "export-excel") exportCurrentSheet();
 
+    if (action === "set-archive-filter") {
+      archiveFilter = target.dataset.filter;
+      render();
+    }
+
+    if (action === "archive-section") {
+      const secId = target.dataset.section;
+      const section = state.registry.find(s => s.id === secId);
+      if (section) {
+        section.archived = true;
+        document.querySelector(".modal-backdrop")?.remove();
+        render();
+        setStatus(`Class "${section.subject}" moved to archive storage.`);
+      }
+    }
+
+    if (action === "unarchive-section") {
+      const secId = target.dataset.section;
+      const section = state.registry.find(s => s.id === secId);
+      if (section) {
+        section.archived = false;
+        document.querySelector(".modal-backdrop")?.remove();
+        render();
+        setStatus(`Class "${section.subject}" restored to active records.`);
+      }
+    }
+
     if (action === "open-add-class") renderAddClass();
     if (action === "save-new-class") {
-      const level = document.querySelector("#addClassLevel").value;
-      const subject = document.querySelector("#addClassSubject").value;
-      const section = document.querySelector("#addClassSection").value;
+      const level = document.querySelector("#addClassLevel").value.trim() || "Grade 8";
+      const presetSelect = document.querySelector("#addClassSubjectPreset");
+      let subject = presetSelect ? presetSelect.value : "Science";
+      if (subject === "custom") {
+        const customInput = document.querySelector("#addClassCustomSubject");
+        subject = (customInput && customInput.value.trim()) || "General Subject";
+      }
+      const sectionName = document.querySelector("#addClassSection").value.trim();
       const theme = document.querySelector("#addClassTheme").value;
       
+      const weights = matchSubjectWeights(subject);
       const isSHS = String(level).includes("11") || String(level).includes("12");
       const group = isSHS ? "SHS" : "JHS";
       
       const newId = "class-" + Date.now();
-      const newClass = { id: newId, group, level, subject, section, weights: [20, 50, 30], theme, accent: theme, rosterSize: 42 };
+      const newClass = { id: newId, group, level, subject, section: sectionName, weights, theme, accent: theme, rosterSize: 42, archived: false };
       
       state.registry.push(newClass);
       state.sections[newId] = { periods: [initialPeriod(newClass)] };
       activeGroup = group;
       activeSectionId = newId;
+      archiveFilter = "active";
       render();
-      setStatus("New class created successfully.");
+      setStatus(`New class "${subject}" created with ${weights.join("/")}% weights distribution.`);
       document.querySelector(".modal-backdrop")?.remove();
     }
 
@@ -1170,9 +1426,16 @@
     if (action === "save-section-edit") {
       const section = state.registry.find(s => s.id === target.dataset.section);
       if (section) {
-        section.level = document.querySelector("#editSectionLevel").value;
-        section.subject = document.querySelector("#editSectionSubject").value;
-        section.section = document.querySelector("#editSectionSection").value;
+        section.level = document.querySelector("#editSectionLevel").value.trim();
+        const presetSelect = document.querySelector("#editSectionSubjectPreset");
+        let subject = presetSelect ? presetSelect.value : section.subject;
+        if (subject === "custom") {
+          const customInput = document.querySelector("#editSectionCustomSubject");
+          subject = (customInput && customInput.value.trim()) || section.subject;
+        }
+        section.subject = subject;
+        section.weights = matchSubjectWeights(subject);
+        section.section = document.querySelector("#editSectionSection").value.trim();
         const theme = document.querySelector("#editSectionTheme").value;
         section.theme = theme;
         section.accent = theme;
@@ -1181,7 +1444,7 @@
         section.group = isSHS ? "SHS" : "JHS";
         
         render();
-        setStatus("Section details modified locally. Do not forget to save changes.");
+        setStatus(`Section "${section.subject}" updated. Grading weights: ${section.weights.join("/")}%.`);
       }
       document.querySelector(".modal-backdrop")?.remove();
     }
@@ -1189,24 +1452,39 @@
     if (action === "logout") { sessionStorage.removeItem("cstr-class-record-login"); sessionStorage.removeItem("cstr-class-record-user"); currentView = "home"; render(); }
     if (action === "go-home") { currentView = "home"; render(); }
     if (action === "go-records") { currentView = "chooser"; render(); }
-    if (action === "select-group") { activeGroup = target.dataset.group; activeSectionId = state.registry.find((section) => section.group === activeGroup).id; activePeriodIndex = 0; currentView = "chooser"; render(); }
+    if (action === "select-group") { 
+      activeGroup = target.dataset.group; 
+      const firstInGroup = state.registry.find((section) => section.group === activeGroup && !section.archived) || state.registry.find((section) => section.group === activeGroup) || state.registry[0];
+      activeSectionId = firstInGroup.id; 
+      activePeriodIndex = 0; 
+      currentView = "chooser"; 
+      render(); 
+    }
     if (action === "select-section") { activeSectionId = target.dataset.section; activeGroup = currentSection().group; activePeriodIndex = 0; currentView = "record"; render(); }
     if (action === "select-period") { activePeriodIndex = Number(target.dataset.period); render(); }
     if (action === "add-period") addPeriod();
     if (action === "save-changes") saveToGist();
     if (action === "open-settings") renderSettings();
-    if (action === "close-settings") closeSettings();
     if (action === "save-settings") saveSettings();
     if (action === "load-gist") { saveSettings(); loadFromGist(); }
     if (action === "choose-photo") choosePhoto();
     if (action === "search-student") searchStudent();
-    if (action === "close-search") document.querySelector(".modal-backdrop")?.remove();
   });
 
+  // Keydown shortcuts
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && event.target && event.target.id === "studentSearch") { event.preventDefault(); searchStudent(); }
+    if (event.key === "Enter") {
+      if (event.target && event.target.id === "studentSearch") {
+        event.preventDefault();
+        searchStudent();
+      } else if (event.target && event.target.id === "loginPassword") {
+        event.preventDefault();
+        performLogin();
+      }
+    }
   });
 
+  // Real-time input handling
   app.addEventListener("input", (event) => {
     const input = event.target;
     if (input.dataset.nameRow !== undefined) { 
@@ -1240,6 +1518,25 @@
       currentPeriod().roster[row][kind][index] = sanitized; updateLiveSummary(row);
     }
     if (input.dataset.hps) { currentPeriod()[`${input.dataset.hps}Hps`][Number(input.dataset.index)] = input.value; updateAllSummaries(); }
+  });
+
+  // Change events (such as interactive subject switcher in class sheet)
+  app.addEventListener("change", (event) => {
+    if (event.target.id === "photoInput") handlePhoto(event.target.files[0]);
+    if (event.target.dataset.teacher !== undefined) { state.teacher[event.target.dataset.teacher] = event.target.value; }
+    
+    if (event.target.dataset.action === "change-sheet-subject") {
+      const section = currentSection();
+      const val = event.target.value;
+      if (val === "custom") {
+        renderEditSection(section.id);
+        return;
+      }
+      section.subject = val;
+      section.weights = matchSubjectWeights(val);
+      render();
+      setStatus(`Class subject changed to ${val}. Weights updated to ${section.weights.join("/")}%.`);
+    }
   });
 
   function applyBulkPaste(startRow, startCol, text) {
@@ -1307,11 +1604,6 @@
     }
   });
 
-  app.addEventListener("change", (event) => {
-    if (event.target.id === "photoInput") handlePhoto(event.target.files[0]);
-    if (event.target.dataset.teacher !== undefined) { state.teacher[event.target.dataset.teacher] = event.target.value; }
-  });
-  
   function initApp() {
     render();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
