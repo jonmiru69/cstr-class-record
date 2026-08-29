@@ -1,4 +1,4 @@
-\/*
+/*
  * Pure, DOM-free grading functions for the CSTR Class Record.
  * Display rounding is deliberately kept separate from calculations.
  * Features:
