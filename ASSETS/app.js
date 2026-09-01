@@ -47,8 +47,10 @@
   let stateRevision = 0;
   let lastSavedRevision = 0;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
+  let pendingAutoSaveChanges = 0;
 
   const AUTOSAVE_DELAY = 900;
+  const AUTOSAVE_MIN_CHANGES = 8; // Safety buffer: require this many edits (input, edit, add, delete, etc.) to accumulate before an autosave is allowed to push to GitHub, so a single accidental clear/deletion isn't silently synced.
   const LOCAL_DRAFT_PREFIX = "cstr-class-record-autosave-draft:";
 
   function rememberTableScroll() {
@@ -120,13 +122,26 @@
   }
 
   function queueAutoSave() {
+    // A local recovery copy is kept on every change regardless of the change-count
+    // buffer below — this is just a browser-side safety net and never overwrites
+    // the shared GitHub Gist, so it's safe to keep it fully up to date.
     persistLocalDraft();
     if (!isSignedIn()) return;
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(() => {
       autoSaveTimer = null;
+
+      // Require a minimum number of accumulated edits (input, edit, add, delete —
+      // anything that calls markStateDirty) before pushing an automatic save to
+      // GitHub. This prevents a single accidental clear/deletion of a score from
+      // being immediately and silently synced to the shared saved copy. The local
+      // recovery draft above still protects the in-progress edits in the meantime,
+      // and the "Save Changes" button always saves immediately regardless of this buffer.
+      if (pendingAutoSaveChanges < AUTOSAVE_MIN_CHANGES) return;
+
       if (!hasGistCredentials()) {
         showSaveToast("Changes saved on this device. Add GitHub sync in Settings to back them up online.", "info");
+        pendingAutoSaveChanges = 0;
         return;
       }
       if (!isDataLoaded) {
@@ -139,6 +154,7 @@
 
   function markStateDirty() {
     stateRevision += 1;
+    pendingAutoSaveChanges += 1;
     queueAutoSave();
   }
 
@@ -444,7 +460,7 @@
     const content = currentView === "home" ? renderHome() : currentView === "chooser" ? renderClassRecord() : renderSectionRecord();
     return `<div class="aura-bg"><div class="aura-layer-1" aria-hidden="true"></div><div class="aura-layer-2" aria-hidden="true"></div><div class="aura-content"><header class="app-header"><div class="app-header-inner">
       <div class="app-header-brand">
-        <span class="header-logo"><img src="cstr-logo.png" alt="Colegio de Sto. Tomás – Recoletos crest"></span>
+        <span class="header-logo"><img src="ASSETS/cstr-logo.png" alt="Colegio de Sto. Tomás – Recoletos crest"></span>
         <div><p class="eyebrow">CSTR • San Carlos City, Negros Occidental</p>
         <h1 class="app-title">Colegio de Sto. Tomás – Recoletos, Incorporated</h1>
         <p class="muted">Website for Class Record, with respect to DepEd Order No. 15, s. 2026.</p></div>
@@ -1260,7 +1276,7 @@
       });
       if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
       lastSavedRevision = Math.max(lastSavedRevision, savedRevision);
-      if (stateRevision === savedRevision) localStorage.removeItem(localDraftKey());
+      if (stateRevision === savedRevision) { localStorage.removeItem(localDraftKey()); pendingAutoSaveChanges = 0; }
       setStatus(automatic ? "Autosaved ✓" : "Saved ✓");
       showSaveToast(automatic ? "All changes autosaved to GitHub." : "Changes saved to GitHub.");
       return true;
@@ -1307,6 +1323,7 @@
       activePeriodIndex = 0;
       isDataLoaded = true;
       isLoading = false;
+      pendingAutoSaveChanges = 0;
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
