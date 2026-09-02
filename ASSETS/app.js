@@ -38,6 +38,12 @@
 
   let isDataLoaded = false;
   let isLoading = false;
+  let loadRequestId = 0;    // Bumped on every loadFromGist() call so a slower, older in-flight
+                             // request (e.g. from a stale/earlier credential attempt) can never
+                             // overwrite the outcome of a newer one that already finished.
+  let lastLoadError = "";   // Persists the real reason the last load failed, so it survives
+                             // later re-renders instead of being silently replaced by the
+                             // generic "DATA LOCKED" status.
   let isSaving = false;
   let saveQueued = false;
   let autoSaveTimer = null;
@@ -1392,7 +1398,13 @@
       setStatus("Syncing with GitHub Gist... Please wait.", "saving");
     } else if (!isDataLoaded) {
       btn.disabled = true;
-      setStatus("⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving to prevent overwriting.", "error");
+      // If a load attempt actually failed, keep showing the REAL reason
+      // (bad token, wrong Gist ID, corrupted data, etc.) instead of masking
+      // it with the generic locked message on every re-render — otherwise
+      // the specific error flashes once and is never seen again.
+      setStatus(lastLoadError
+        ? `⚠️ DATA LOCKED — load failed: ${lastLoadError} Open Settings and click "Load saved data" to try again.`
+        : "⚠️ DATA LOCKED: Click 'Load saved data' in Settings before saving to prevent overwriting.", "error");
     } else {
       btn.disabled = false;
       setStatus("Ready to save. ✓");
@@ -1481,7 +1493,14 @@
     const token = localStorage.getItem(GIST_TOKEN_KEY);
     if (!gistId || !token) { setStatus("Enter the Gist ID and Personal Access Token first.", "error"); return; }
     
+    // Each call gets its own id. If a second call starts before this one
+    // finishes (e.g. credentials re-entered while the first attempt was
+    // still in flight), only the result of the LATEST call is allowed to
+    // change isLoading/isDataLoaded — a slow, stale request finishing late
+    // can no longer clobber a newer request's success (or vice versa).
+    const requestId = ++loadRequestId;
     isLoading = true;
+    lastLoadError = "";
     syncSaveControl();
     setStatus("Loading saved data from GitHub...", "saving");
     try {
@@ -1489,13 +1508,26 @@
         headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}` },
         cache: "no-store" 
       });
-      if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+      if (!response.ok) {
+        let detail = "";
+        try { detail = (await response.json()).message || ""; } catch (_) { /* response wasn't JSON */ }
+        const reason = response.status === 401 ? "Bad credentials — the Personal Access Token is invalid, expired, or was revoked."
+          : response.status === 404 ? "Gist not found for this token — either the Gist ID is wrong, or this token lacks the \"gist\" scope needed to see it."
+          : response.status === 403 ? `Access denied${detail ? ` (${detail})` : ""} — this may be a rate limit or missing token permission.`
+          : `${response.status}${detail ? ` — ${detail}` : ""}`;
+        throw new Error(reason);
+      }
       const gist = await response.json();
       const file = gist.files["cstr-class-record-data.json"] || Object.values(gist.files)[0];
       if (!file) throw new Error("No JSON file was found in this Gist.");
       const content = file.truncated ? await (await fetch(file.raw_url, { headers: { "Authorization": `Bearer ${token}` }, cache: "no-store" })).text() : file.content;
       
-      const parsedGist = JSON.parse(content || "{}");
+      let parsedGist;
+      try {
+        parsedGist = JSON.parse(content || "{}");
+      } catch (parseError) {
+        throw new Error("The data saved in the Gist is not valid JSON, so nothing was loaded (to avoid saving over it and losing it for good). The Gist's raw file may need to be repaired manually.");
+      }
       const currentUser = sessionStorage.getItem("cstr-class-record-user");
       
       // Pre-multi-account Gists stored the sole account's data directly at the
@@ -1513,10 +1545,13 @@
         ? parsedGist[currentUser]
         : (canUseLegacyRootData ? parsedGist : {});
 
+      if (requestId !== loadRequestId) return; // a newer load has since started; let it decide the outcome
+
       state = normalizeState(ownedData);
       activePeriodIndex = 0;
       isDataLoaded = true;
       isLoading = false;
+      lastLoadError = "";
       pendingAutoSaveChanges = 0;
       commitActiveFieldEdit();
       if (autoSaveMaxWaitTimer) { clearTimeout(autoSaveMaxWaitTimer); autoSaveMaxWaitTimer = null; }
@@ -1526,10 +1561,12 @@
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
+      if (requestId !== loadRequestId) return; // a newer load has since started; let it decide the outcome
       isLoading = false;
       isDataLoaded = false;
+      lastLoadError = error.message;
       render();
-      setStatus(`Load Error: ${error.message}. Save is locked to protect data.`, "error"); 
+      setStatus(`Load Error: ${error.message}`, "error"); 
     }
   }
 
@@ -1551,6 +1588,7 @@
     modal.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="section-heading"><div><p class="eyebrow">GitHub Gist sync</p><h2 id="settingsTitle">Settings</h2></div>${button("✕ Close", "close-modal")}</div>
       <div class="settings-grid"><label>Gist ID<input id="gistId" value="${safeValue(localStorage.getItem(GIST_ID_KEY) || "")}" autocomplete="off"></label><label>GitHub Personal Access Token<input id="gistToken" type="password" value="${safeValue(localStorage.getItem(GIST_TOKEN_KEY) || "")}" autocomplete="off"></label></div>
       <p class="settings-note">These credentials are stored only in this browser's localStorage. Do not commit a token to the repository. Each device needs its own credentials to read and save the shared Gist.</p>
+      ${lastLoadError ? `<p class="settings-note" style="color: var(--danger, #c0392b); border: 1px solid currentColor; border-radius: 8px; padding: 10px 12px;">⚠️ Last load attempt failed: ${safeValue(lastLoadError)}</p>` : ""}
       <div class="stack-actions">${button("Save credentials", "save-settings", "button button-primary")} ${button("Load saved data", "load-gist")}</div>
       <div class="section-heading" style="margin-top: 22px;"><div><p class="eyebrow">Recovery</p><h2 style="font-size: 1.1rem;">Restore a previous version</h2></div></div>
       <p class="settings-note">Every time changes are saved, the state just before that save is kept here on this device — use this if a value was cleared or deleted by accident. Restoring loads that version into the app; you'll still need to save it to sync the rollback to GitHub.</p>
@@ -1923,7 +1961,13 @@
     if (action === "save-changes") saveToGist();
     if (action === "open-settings") renderSettings();
     if (action === "save-settings") saveSettings();
-    if (action === "load-gist") { saveSettings(); loadFromGist(); }
+    // NOTE: saveSettings() already calls loadFromGist() itself once credentials
+    // are persisted — calling loadFromGist() again here used to fire two
+    // concurrent load requests on every click. If the slower of the two
+    // failed (even a harmless transient blip) it could revert isDataLoaded
+    // back to false right after the faster one had just succeeded, leaving
+    // Save permanently locked until another load happened to land cleanly.
+    if (action === "load-gist") saveSettings();
     if (action === "restore-version") restoreVersion(Number(target.dataset.versionIndex));
     if (action === "choose-photo") choosePhoto();
     if (action === "search-student") searchStudent();
