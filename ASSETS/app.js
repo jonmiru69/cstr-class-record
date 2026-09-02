@@ -16,9 +16,10 @@
     getGradeDescriptor
   } = window.CSTRGrading;
   
-  const VALID_LOGINS = ["harty342002", "maamsamcstr1234"];
+  const VALID_LOGINS = ["harty342002", "maamsamcstr1234", "lycalikezone67", "shervibels00"];
   const GIST_ID_KEY = "cstr-class-record-gist-id";
   const GIST_TOKEN_KEY = "cstr-class-record-pat";
+  const WELCOME_SEEN_PREFIX = "cstr-class-record-welcome-seen:";
   const app = document.querySelector("#app");
 
   const DEFAULT_REGISTRY = [
@@ -90,6 +91,29 @@
 
   function isSignedIn() {
     return sessionStorage.getItem("cstr-class-record-login") === "true";
+  }
+
+  // Every account (existing or newly added to VALID_LOGINS) is a full account with
+  // identical functionality — this only tracks whether a one-time welcome notice
+  // has been shown on this device, so it appears exactly once per account.
+  function welcomeSeenKey() {
+    return `${WELCOME_SEEN_PREFIX}${currentUserKey()}`;
+  }
+
+  function hasSeenWelcome() {
+    try {
+      return localStorage.getItem(welcomeSeenKey()) === "true";
+    } catch (error) {
+      return true; // If storage is unavailable, fail closed rather than repeat the popup.
+    }
+  }
+
+  function markWelcomeSeen() {
+    try {
+      localStorage.setItem(welcomeSeenKey(), "true");
+    } catch (error) {
+      // No persistent storage available; nothing further to do.
+    }
   }
 
   function cloneState(value) {
@@ -572,6 +596,10 @@
       sessionStorage.setItem("cstr-class-record-login", "true");
       sessionStorage.setItem("cstr-class-record-user", password);
       render(); 
+      if (!hasSeenWelcome()) {
+        markWelcomeSeen();
+        showWelcomeModal();
+      }
       if (localStorage.getItem(GIST_ID_KEY) && localStorage.getItem(GIST_TOKEN_KEY)) {
         loadFromGist(); 
       } else {
@@ -1145,6 +1173,24 @@
     modal.className = "modal-backdrop";
     modal.innerHTML = `<section class="modal search-result-modal" role="dialog" aria-modal="true" aria-labelledby="studentSearchTitle"><div class="section-heading"><div><p class="eyebrow">Private grade check</p><h2 id="studentSearchTitle">Student result</h2></div>${button("✕ Close", "close-modal")}</div><div class="student-results">${isHtml ? message : `<p class="muted">${escapeHtml(message)}</p>`}</div></section>`;
     document.body.append(modal);
+  }
+
+  // One-time welcome notice — shown the single first time ANY account (existing or
+  // newly added to VALID_LOGINS) successfully logs in on a given device. Every
+  // account has identical full functionality; this is purely an informational
+  // greeting/disclaimer and never gates or limits what an account can do.
+  function showWelcomeModal() {
+    document.querySelector(".modal-backdrop.welcome-modal")?.remove();
+    const modal = document.createElement("div");
+    modal.className = "modal-backdrop welcome-modal";
+    modal.innerHTML = `<section class="modal welcome-modal-card" role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle">
+      <p class="eyebrow">First time on this device</p>
+      <h2 id="welcomeModalTitle">WELCOME TO CST-R CLASS RECORD WEBSITE DEVELOPED BY SIR JOHNMIL SANCHEZ, LPT!</h2>
+      <p class="welcome-modal-subtitle">This is an UNOFFICIAL class record — not an official DepEd or school-issued system — but it is fully functional, built to follow all necessary DepEd grading guidelines and details, and supports all the necessary class record functions.</p>
+      <div class="stack-actions" style="justify-content:flex-end; margin-top:20px;">${button("Got it, let's start", "close-modal", "button button-primary")}</div>
+    </section>`;
+    document.body.append(modal);
+    modal.querySelector(".welcome-modal-card")?.focus();
   }
 
   function renderAddClass() {
