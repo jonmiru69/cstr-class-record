@@ -41,19 +41,10 @@ html {
 }
 body { margin: 0; min-width: 320px; position: relative; overflow-x: hidden; background-color: #faf8f2; }
 
-/* Ember Glow aura: the body provides the base color for the multiply layers. */
-.aura-bg { position: relative; min-height: 100vh; overflow: hidden; }
-.aura-layer-1, .aura-layer-2 {
-  position: absolute; inset: 0; pointer-events: none; mix-blend-mode: multiply;
-  filter: blur(90px); transform: translateZ(0); will-change: transform;
-}
-.aura-layer-1 { background: linear-gradient(rgba(0,0,0,0) 0%, rgba(255,106,61,0.12) 28%, rgb(255,255,255) 18%, rgb(255,201,77) 68%, rgb(255,61,119) 100%); }
-.aura-layer-2 { background: linear-gradient(rgba(0,0,0,0) 0%, rgba(255,106,61,0.22) 34%, rgb(255,255,255) 66%, rgb(255,201,77) 82%, rgb(255,61,119) 100%); }
+/* Plain beige background, blended with the site's existing off-white/beige tones (--base, #faf8f2, #FAF6EE). */
+.aura-bg { position: relative; min-height: 100vh; overflow: hidden; background: #F5EFE0; }
+.aura-layer-1, .aura-layer-2 { display: none; }
 .aura-content { position: relative; z-index: 1; min-height: 100vh; }
-
-@media (min-width: 769px) {
-  .aura-layer-1, .aura-layer-2 { filter: blur(130px); }
-}
 
 button, input, select, textarea { font-family: var(--font-sans); }
 button { cursor: pointer; }
