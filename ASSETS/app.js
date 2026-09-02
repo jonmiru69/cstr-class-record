@@ -22,19 +22,16 @@
   const WELCOME_SEEN_PREFIX = "cstr-class-record-welcome-seen:";
   const app = document.querySelector("#app");
 
-  const DEFAULT_REGISTRY = [
-    { id: "g8-alfonso", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Alfonso de Orozco", weights: [20, 50, 30], theme: "purple", accent: "purple", rosterSize: 42, archived: false },
-    { id: "g8-john", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint John Stone", weights: [20, 50, 30], theme: "green", accent: "green", rosterSize: 42, archived: false },
-    { id: "g8-pedro", group: "JHS", level: "Grade 8", subject: "Science", section: "Saint Pedro Calungsod", weights: [20, 50, 30], theme: "blue", accent: "blue", rosterSize: 42, archived: false },
-    { id: "g9-ezekiel", group: "JHS", level: "Grade 9", subject: "ICL-Research III", section: "Saint Ezekiel Moreno", weights: [20, 50, 30], theme: "red", accent: "red", rosterSize: 42, archived: false },
-    { id: "g11-physics-carmel", group: "SHS", level: "Grade 11", subject: "Physics 1", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "charcoal", rosterSize: 42, archived: false },
-    { id: "g11-general-carmel", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Mount Carmel", weights: [20, 50, 30], theme: "blue", accent: "baby-blue", rosterSize: 42, archived: false },
-    { id: "g11-consolacion", group: "SHS", level: "Grade 11", subject: "General Science 11", section: "Our Lady of Consolacion", weights: [20, 50, 30], theme: "blue", accent: "deep-red", rosterSize: 42, archived: false }
-  ];
+  // Fresh/blank template for a brand-new account with no saved data yet.
+  // Intentionally EMPTY: every account (new or existing) must start with zero
+  // classes and build its own registry via "+ Add Class". Do not repopulate
+  // this with sample sections — doing so previously caused new accounts to
+  // appear to inherit another teacher's class list.
+  const DEFAULT_REGISTRY = [];
 
   let currentView = "home";
   let activeGroup = "JHS";
-  let activeSectionId = DEFAULT_REGISTRY[0].id;
+  let activeSectionId = DEFAULT_REGISTRY[0]?.id || "";
   let activePeriodIndex = 0;
   let archiveFilter = "active"; // "active" | "archived"
   let state = createInitialState();
@@ -1501,9 +1498,20 @@
       const parsedGist = JSON.parse(content || "{}");
       const currentUser = sessionStorage.getItem("cstr-class-record-user");
       
-      const ownedData = parsedGist && typeof parsedGist === "object" && parsedGist[currentUser]
+      // Pre-multi-account Gists stored the sole account's data directly at the
+      // JSON root (no per-username key, just {version, registry, sections, ...}).
+      // That legacy root data belongs ONLY to the original account it was
+      // created under. It must never be handed to a different/newly-added
+      // account just because that account hasn't saved anything yet — doing
+      // so is what previously caused brand-new accounts to load another
+      // teacher's classes. A user with no keyed entry always starts blank.
+      const LEGACY_ROOT_DATA_OWNER = "harty342002";
+      const hasKeyedEntry = Boolean(parsedGist && typeof parsedGist === "object" && parsedGist[currentUser]);
+      const canUseLegacyRootData = currentUser === LEGACY_ROOT_DATA_OWNER
+        && parsedGist && typeof parsedGist === "object" && parsedGist.version;
+      const ownedData = hasKeyedEntry
         ? parsedGist[currentUser]
-        : (parsedGist.version ? parsedGist : {});
+        : (canUseLegacyRootData ? parsedGist : {});
 
       state = normalizeState(ownedData);
       activePeriodIndex = 0;
