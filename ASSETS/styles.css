@@ -609,6 +609,10 @@ input.cell-selected {
 .settings-grid label { display: grid; gap: 6px; font-weight: 600; font-size: 0.9rem; }
 .settings-grid input, .settings-grid select { min-height: 42px; border: 1.5px solid var(--border); border-radius: 8px; padding: 8px 12px; background: #fff; font-size: 0.92rem; }
 .settings-note { margin: 18px 0; padding: 12px 14px; border-left: 4px solid var(--gold); background: #fffdf4; color: var(--muted); line-height: 1.5; font-size: .88rem; border-radius: 0 6px 6px 0; }
+.welcome-modal-card { border-top: 5px solid var(--gold); text-align: center; }
+.welcome-modal-card .eyebrow { text-align: center; }
+.welcome-modal-card h2 { margin: 10px 0 14px; line-height: 1.3; }
+.welcome-modal-subtitle { margin: 0; color: var(--muted); line-height: 1.55; font-size: .92rem; }
 .delete-confirmation { border-top: 5px solid #991b1b; }
 .delete-confirmation > p { margin: 18px 0; color: #4b5563; line-height: 1.55; }
 .delete-confirmation-label { display: grid; gap: 8px; font-size: .88rem; color: #7f1d1d; }
