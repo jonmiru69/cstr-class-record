@@ -198,6 +198,12 @@ h3 { font-size: 1.05rem; margin-bottom: 8px; font-weight: 600; }
 .save-status.error { color: #FFB3AC; }
 .save-status.saving { color: var(--yellow); }
 
+.save-meta { min-height: 1em; max-width: min(340px, 60vw); margin: 0; text-align: right; font-size: .72rem; font-weight: 500; color: rgba(255, 255, 255, .65); }
+.save-meta.has-unsaved { color: var(--yellow); font-weight: 700; }
+
+.version-history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 220px; overflow-y: auto; }
+.version-history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1.5px solid var(--border); border-radius: 8px; font-size: .88rem; }
+
 .save-toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 100001;
   display: flex; align-items: center; gap: 10px; max-width: min(380px, calc(100vw - 32px));
@@ -657,6 +663,7 @@ input.cell-selected {
   .header-actions { width: 100%; }
   .header-actions .button { flex: 1 1 auto; }
   .save-status { text-align: left; max-width: 100%; }
+  .save-meta { text-align: left; max-width: 100%; }
   .save-toast { right: 16px; bottom: 16px; }
   .home-grid { grid-template-columns: 1fr; margin: 20px 0; padding: 20px; }
   .photo-frame { width: 140px; height: 140px; }
