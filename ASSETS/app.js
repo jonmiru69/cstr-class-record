@@ -47,11 +47,21 @@
   let stateRevision = 0;
   let lastSavedRevision = 0;
   let selectionState = { active: false, startRow: null, startCol: null, endRow: null, endCol: null };
-  let pendingAutoSaveChanges = 0;
+  let pendingAutoSaveChanges = 0;   // Logical edits accumulated since the last successful save
+  let activeEditFieldKey = null;    // Identifies the field currently mid-edit, so multi-keystroke typing groups into one logical change
+  let fieldEditIdleTimer = null;
+  let autoSaveMaxWaitTimer = null;  // Forces a save AUTOSAVE_MAX_WAIT_MS after the first unsaved change, even under the change threshold
+  let preBatchSnapshot = null;      // Full state as of the last clean save — the restorable "previous version"
+  let lastSavedAt = null;           // Date of the last successful save (cloud, or local-only fallback)
+  let saveIndicatorTicker = null;
 
-  const AUTOSAVE_DELAY = 900;
-  const AUTOSAVE_MIN_CHANGES = 8; // Safety buffer: require this many edits (input, edit, add, delete, etc.) to accumulate before an autosave is allowed to push to GitHub, so a single accidental clear/deletion isn't silently synced.
+  const AUTOSAVE_DELAY = 900; // Quiet period after the most recent edit before the change-count is checked
+  const AUTOSAVE_MIN_CHANGES = 8; // Safety buffer: require this many logical edits (input, edit, add, delete, etc.) to accumulate before an autosave is allowed to push to GitHub, so a single accidental clear/deletion isn't silently synced.
+  const AUTOSAVE_MAX_WAIT_MS = 3 * 60 * 1000; // Ceiling: force an autosave this long after the first unsaved change, even if the 8-change threshold hasn't been reached yet.
+  const FIELD_EDIT_GROUP_IDLE_MS = 1200; // Keystrokes on the same field within this window count as ONE logical edit, not one per keystroke.
   const LOCAL_DRAFT_PREFIX = "cstr-class-record-autosave-draft:";
+  const VERSION_HISTORY_PREFIX = "cstr-class-record-history:";
+  const MAX_HISTORY_VERSIONS = 8; // How many restorable previous versions to keep per user
 
   function rememberTableScroll() {
     const wrap = document.querySelector(".table-wrap");
@@ -104,6 +114,40 @@
     }
   }
 
+  function versionHistoryKey() {
+    return `${VERSION_HISTORY_PREFIX}${currentUserKey()}`;
+  }
+
+  function loadVersionHistory() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(versionHistoryKey()) || "[]");
+      return Array.isArray(raw) ? raw : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  // Records a restorable checkpoint of the state as it stood BEFORE a batch of
+  // changes was saved. This is what lets an accidental deletion or clearing be
+  // rolled back later, even after that batch has already been autosaved.
+  function pushVersionSnapshot(snapshotState) {
+    if (!snapshotState) return;
+    try {
+      const history = loadVersionHistory();
+      history.push({ savedAt: new Date().toISOString(), state: snapshotState });
+      while (history.length > MAX_HISTORY_VERSIONS) history.shift();
+      localStorage.setItem(versionHistoryKey(), JSON.stringify(history));
+    } catch (error) {
+      // Best-effort recovery point only — never block the actual save over this.
+    }
+  }
+
+  // Marks the current state as the known-good baseline that the NEXT batch of
+  // edits will be checkpointed against.
+  function establishCleanBaseline() {
+    preBatchSnapshot = cloneState(state);
+  }
+
   function showSaveToast(message, type = "success") {
     document.querySelector("#saveToast")?.remove();
     if (saveToastTimer) clearTimeout(saveToastTimer);
@@ -121,6 +165,58 @@
     }, 3200);
   }
 
+  // Closes out an in-progress keystroke-grouped field edit (see markFieldEditDirty)
+  // without changing the pending-change count — the edit was already counted
+  // the moment it started.
+  function commitActiveFieldEdit() {
+    if (fieldEditIdleTimer) { clearTimeout(fieldEditIdleTimer); fieldEditIdleTimer = null; }
+    activeEditFieldKey = null;
+  }
+
+  // Guarantees an autosave happens at most AUTOSAVE_MAX_WAIT_MS after the FIRST
+  // unsaved change in a batch, even if the 8-change threshold is never reached
+  // (e.g. the teacher makes a few edits, then walks away).
+  function scheduleAutoSaveMaxWait() {
+    if (autoSaveMaxWaitTimer) return; // Already ticking for this unsaved batch
+    autoSaveMaxWaitTimer = setTimeout(() => {
+      autoSaveMaxWaitTimer = null;
+      if (pendingAutoSaveChanges > 0) triggerAutoSaveNow();
+    }, AUTOSAVE_MAX_WAIT_MS);
+  }
+
+  // fieldKey groups consecutive keystrokes on the SAME field into a single
+  // logical change. Pass null for direct, single-shot actions (buttons, bulk
+  // paste, photo upload, etc.) that are already one meaningful edit apiece.
+  function noteEdit(fieldKey) {
+    stateRevision += 1;
+    const isNewLogicalChange = fieldKey ? fieldKey !== activeEditFieldKey : true;
+    if (fieldKey) {
+      activeEditFieldKey = fieldKey;
+      if (fieldEditIdleTimer) clearTimeout(fieldEditIdleTimer);
+      fieldEditIdleTimer = setTimeout(() => { activeEditFieldKey = null; fieldEditIdleTimer = null; }, FIELD_EDIT_GROUP_IDLE_MS);
+    } else {
+      commitActiveFieldEdit();
+    }
+    if (isNewLogicalChange) {
+      if (pendingAutoSaveChanges === 0 && !preBatchSnapshot) establishCleanBaseline();
+      pendingAutoSaveChanges += 1;
+      scheduleAutoSaveMaxWait();
+    }
+    updateSaveIndicators();
+    queueAutoSave();
+  }
+
+  function markStateDirty() {
+    noteEdit(null);
+  }
+
+  // Use for text/number fields wired to the "input" event, so typing multiple
+  // characters into the same cell (or deleting them) counts as ONE change,
+  // not one per keystroke.
+  function markFieldEditDirty(fieldKey) {
+    noteEdit(fieldKey);
+  }
+
   function queueAutoSave() {
     // A local recovery copy is kept on every change regardless of the change-count
     // buffer below — this is just a browser-side safety net and never overwrites
@@ -130,32 +226,68 @@
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(() => {
       autoSaveTimer = null;
-
-      // Require a minimum number of accumulated edits (input, edit, add, delete —
-      // anything that calls markStateDirty) before pushing an automatic save to
-      // GitHub. This prevents a single accidental clear/deletion of a score from
-      // being immediately and silently synced to the shared saved copy. The local
-      // recovery draft above still protects the in-progress edits in the meantime,
-      // and the "Save Changes" button always saves immediately regardless of this buffer.
+      // Require a minimum number of accumulated logical edits before pushing an
+      // automatic save to GitHub. This prevents a single accidental clear/deletion
+      // of a score from being immediately and silently synced to the shared saved
+      // copy. The AUTOSAVE_MAX_WAIT_MS ceiling (scheduled separately) still forces
+      // a save if changes keep trickling in slower than this threshold.
       if (pendingAutoSaveChanges < AUTOSAVE_MIN_CHANGES) return;
-
-      if (!hasGistCredentials()) {
-        showSaveToast("Changes saved on this device. Add GitHub sync in Settings to back them up online.", "info");
-        pendingAutoSaveChanges = 0;
-        return;
-      }
-      if (!isDataLoaded) {
-        showSaveToast("Autosave is waiting for verified saved data to load.", "error");
-        return;
-      }
-      saveToGist({ automatic: true });
+      triggerAutoSaveNow();
     }, AUTOSAVE_DELAY);
   }
 
-  function markStateDirty() {
-    stateRevision += 1;
-    pendingAutoSaveChanges += 1;
-    queueAutoSave();
+  function triggerAutoSaveNow() {
+    commitActiveFieldEdit();
+    if (!isSignedIn() || pendingAutoSaveChanges === 0) return;
+    if (!hasGistCredentials()) {
+      // No cloud sync configured — the local recovery draft is the only store.
+      // Still checkpoint a restorable version and close out this batch.
+      finalizeSavedBatch();
+      showSaveToast("Changes saved on this device. Add GitHub sync in Settings to back them up online.", "info");
+      return;
+    }
+    if (!isDataLoaded) {
+      showSaveToast("Autosave is waiting for verified saved data to load.", "error");
+      return;
+    }
+    saveToGist({ automatic: true });
+  }
+
+  // Called once a batch of changes has actually been persisted (cloud or
+  // local-only): records the pre-batch state as a restorable version, resets
+  // the pending-change counter, and re-establishes the clean baseline.
+  function finalizeSavedBatch() {
+    // Only checkpoint if there was actually a batch of changes to protect —
+    // avoids piling up no-op "versions" every time Save Changes is clicked
+    // with nothing new to save.
+    if (preBatchSnapshot && pendingAutoSaveChanges > 0) pushVersionSnapshot(preBatchSnapshot);
+    pendingAutoSaveChanges = 0;
+    if (autoSaveMaxWaitTimer) { clearTimeout(autoSaveMaxWaitTimer); autoSaveMaxWaitTimer = null; }
+    lastSavedAt = new Date();
+    establishCleanBaseline();
+    updateSaveIndicators();
+  }
+
+  function formatSavedAt(date) {
+    if (!date) return "Not saved yet this session";
+    const diffMs = Date.now() - date.getTime();
+    if (diffMs < 45 * 1000) return "Last saved just now";
+    const diffMin = Math.round(diffMs / 60000);
+    if (diffMin < 60) return `Last saved ${diffMin} minute${diffMin === 1 ? "" : "s"} ago`;
+    return `Last saved at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  }
+
+  // Updates the "N unsaved changes • Last saved …" indicator directly, without
+  // a full re-render — a full render() while the teacher is mid-keystroke would
+  // steal focus out of the input they're typing in.
+  function updateSaveIndicators() {
+    const meta = document.querySelector("#saveMeta");
+    if (!meta) return;
+    const changeLabel = pendingAutoSaveChanges === 0
+      ? "All changes saved"
+      : `${pendingAutoSaveChanges} unsaved change${pendingAutoSaveChanges === 1 ? "" : "s"}`;
+    meta.textContent = `${changeLabel} • ${formatSavedAt(lastSavedAt)}`;
+    meta.classList.toggle("has-unsaved", pendingAutoSaveChanges > 0);
   }
 
   function emptyRoster(size, wwLen = 10, ptLen = 8, qaLen = 3) {
@@ -409,6 +541,7 @@
     app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
       syncSaveControl();
+      updateSaveIndicators();
       adjustNameColumnWidth();
       updateAllNumberingAndCounts();
       updateHeaderScroll();
@@ -445,9 +578,14 @@
         const localDraft = restoreLocalDraft();
         if (localDraft) state = localDraft;
         isDataLoaded = true;
+        pendingAutoSaveChanges = 0;
+        commitActiveFieldEdit();
+        establishCleanBaseline();
+        updateSaveIndicators();
         syncSaveControl();
         if (localDraft) showSaveToast("Restored the latest autosaved copy from this device.", "info");
       }
+      startSaveIndicatorTicker();
     } else { 
       if (error) {
         error.textContent = "Incorrect password. Please try again."; 
@@ -468,6 +606,7 @@
       <div class="header-actions-wrap">
         <div class="header-actions">${button("💾 Save Changes", "save-changes", "button button-primary", `id="saveChanges"`)} ${button("Settings", "open-settings")} ${button("Log out", "logout")}</div>
         <p id="statusMessage" class="save-status" role="status" aria-live="polite"></p>
+        <p id="saveMeta" class="save-meta" aria-live="polite"></p>
       </div>
     </div></header>
     <div class="search-bar"><div class="search-bar-inner">
@@ -1276,7 +1415,8 @@
       });
       if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
       lastSavedRevision = Math.max(lastSavedRevision, savedRevision);
-      if (stateRevision === savedRevision) { localStorage.removeItem(localDraftKey()); pendingAutoSaveChanges = 0; }
+      if (stateRevision === savedRevision) localStorage.removeItem(localDraftKey());
+      finalizeSavedBatch();
       setStatus(automatic ? "Autosaved ✓" : "Saved ✓");
       showSaveToast(automatic ? "All changes autosaved to GitHub." : "Changes saved to GitHub.");
       return true;
@@ -1324,6 +1464,11 @@
       isDataLoaded = true;
       isLoading = false;
       pendingAutoSaveChanges = 0;
+      commitActiveFieldEdit();
+      if (autoSaveMaxWaitTimer) { clearTimeout(autoSaveMaxWaitTimer); autoSaveMaxWaitTimer = null; }
+      establishCleanBaseline();
+      lastSavedAt = new Date();
+      startSaveIndicatorTicker();
       render();
       setStatus("Saved data loaded successfully ✓");
     } catch (error) { 
@@ -1334,13 +1479,29 @@
     }
   }
 
+  function renderVersionHistoryList() {
+    const history = loadVersionHistory();
+    if (!history.length) return `<p class="settings-note">No previous versions saved yet on this device. A restore point is captured automatically each time changes are saved.</p>`;
+    const rows = history.slice().reverse().map((entry, reversedIndex) => {
+      const index = history.length - 1 - reversedIndex; // real index into the stored array
+      const when = new Date(entry.savedAt);
+      const label = Number.isNaN(when.getTime()) ? entry.savedAt : when.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      return `<li class="version-history-row"><span>${safeValue(label)}</span>${button("Restore", "restore-version", "button button-secondary", `data-version-index="${index}"`)}</li>`;
+    }).join("");
+    return `<ul class="version-history-list">${rows}</ul>`;
+  }
+
   function renderSettings() {
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
     modal.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="section-heading"><div><p class="eyebrow">GitHub Gist sync</p><h2 id="settingsTitle">Settings</h2></div>${button("✕ Close", "close-modal")}</div>
       <div class="settings-grid"><label>Gist ID<input id="gistId" value="${safeValue(localStorage.getItem(GIST_ID_KEY) || "")}" autocomplete="off"></label><label>GitHub Personal Access Token<input id="gistToken" type="password" value="${safeValue(localStorage.getItem(GIST_TOKEN_KEY) || "")}" autocomplete="off"></label></div>
       <p class="settings-note">These credentials are stored only in this browser's localStorage. Do not commit a token to the repository. Each device needs its own credentials to read and save the shared Gist.</p>
-      <div class="stack-actions">${button("Save credentials", "save-settings", "button button-primary")} ${button("Load saved data", "load-gist")}</div></section>`;
+      <div class="stack-actions">${button("Save credentials", "save-settings", "button button-primary")} ${button("Load saved data", "load-gist")}</div>
+      <div class="section-heading" style="margin-top: 22px;"><div><p class="eyebrow">Recovery</p><h2 style="font-size: 1.1rem;">Restore a previous version</h2></div></div>
+      <p class="settings-note">Every time changes are saved, the state just before that save is kept here on this device — use this if a value was cleared or deleted by accident. Restoring loads that version into the app; you'll still need to save it to sync the rollback to GitHub.</p>
+      ${renderVersionHistoryList()}
+      </section>`;
     document.body.append(modal);
   }
 
@@ -1353,6 +1514,37 @@
     document.querySelector(".modal-backdrop")?.remove();
     setStatus("Settings saved. Auto-loading data now...");
     loadFromGist(); 
+  }
+
+  function restoreVersion(index) {
+    const history = loadVersionHistory();
+    const entry = history[index];
+    if (!entry || !entry.state) { setStatus("That version could not be found.", "error"); return; }
+    const when = new Date(entry.savedAt);
+    const label = Number.isNaN(when.getTime()) ? entry.savedAt : when.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    const confirmed = confirm(`Restore the version from ${label}?\n\nThis replaces everything currently on screen with that earlier version and saves right away.`);
+    if (!confirmed) return;
+
+    // Preserve whatever is currently on screen as its own checkpoint first,
+    // in case this restore turns out to be the wrong call.
+    const stateBeforeRestore = cloneState(state);
+
+    state = normalizeState(entry.state);
+    activePeriodIndex = 0;
+    commitActiveFieldEdit();
+    if (autoSaveMaxWaitTimer) { clearTimeout(autoSaveMaxWaitTimer); autoSaveMaxWaitTimer = null; }
+    pendingAutoSaveChanges = 0;
+    preBatchSnapshot = stateBeforeRestore;
+    markStateDirty();
+    document.querySelector(".modal-backdrop")?.remove();
+    render();
+    setStatus("Previous version restored ✓");
+    if (hasGistCredentials() && isDataLoaded) {
+      saveToGist();
+    } else {
+      finalizeSavedBatch();
+      showSaveToast("Previous version restored on this device.", "info");
+    }
   }
 
   function choosePhoto() { document.querySelector("#photoInput")?.click(); }
@@ -1678,6 +1870,7 @@
     if (action === "open-settings") renderSettings();
     if (action === "save-settings") saveSettings();
     if (action === "load-gist") { saveSettings(); loadFromGist(); }
+    if (action === "restore-version") restoreVersion(Number(target.dataset.versionIndex));
     if (action === "choose-photo") choosePhoto();
     if (action === "search-student") searchStudent();
   });
@@ -1694,6 +1887,19 @@
       }
     }
   });
+
+  // Identifies which logical cell/field a text input belongs to, so repeated
+  // keystrokes (typing, backspacing, clearing) on the SAME cell are grouped
+  // into one logical change instead of one per keystroke.
+  function getFieldKeyForInput(input) {
+    if (input.dataset.nameRow !== undefined) return `name:${activeSectionId}:${activePeriodIndex}:${input.dataset.nameRow}`;
+    if (input.dataset.teacher !== undefined) return `teacher:${input.dataset.teacher}`;
+    if (input.dataset.periodName !== undefined) return `periodName:${activeSectionId}:${activePeriodIndex}`;
+    if (input.dataset.date) return `date:${activeSectionId}:${activePeriodIndex}:${input.dataset.date}:${input.dataset.index}`;
+    if (input.dataset.score) return `score:${activeSectionId}:${activePeriodIndex}:${input.dataset.score}:${input.dataset.row}:${input.dataset.index}`;
+    if (input.dataset.hps) return `hps:${activeSectionId}:${activePeriodIndex}:${input.dataset.hps}:${input.dataset.index}`;
+    return null;
+  }
 
   // Real-time input handling
   app.addEventListener("input", (event) => {
@@ -1731,7 +1937,16 @@
       currentPeriod().roster[row][kind][index] = sanitized; updateLiveSummary(row); stateChanged = true;
     }
     if (input.dataset.hps) { currentPeriod()[`${input.dataset.hps}Hps`][Number(input.dataset.index)] = input.value; updateAllSummaries(); stateChanged = true; }
-    if (stateChanged) markStateDirty();
+    if (stateChanged) {
+      const fieldKey = getFieldKeyForInput(input);
+      if (fieldKey) markFieldEditDirty(fieldKey); else markStateDirty();
+    }
+  });
+
+  // Leaving a field (click elsewhere, Tab, etc.) closes its logical-edit
+  // grouping right away, instead of waiting for the idle timeout.
+  app.addEventListener("focusout", () => {
+    commitActiveFieldEdit();
   });
 
   // Change events (such as interactive subject switcher in class sheet)
@@ -1820,6 +2035,12 @@
     }
   });
 
+  function startSaveIndicatorTicker() {
+    if (saveIndicatorTicker) return;
+    // Refreshes the relative "X minutes ago" wording even when nothing new is edited.
+    saveIndicatorTicker = setInterval(updateSaveIndicators, 30 * 1000);
+  }
+
   function initApp() {
     render();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
@@ -1829,9 +2050,13 @@
         const localDraft = restoreLocalDraft();
         if (localDraft) state = localDraft;
         isDataLoaded = true; 
+        pendingAutoSaveChanges = 0;
+        establishCleanBaseline();
+        updateSaveIndicators();
         syncSaveControl();
         if (localDraft) showSaveToast("Restored the latest autosaved copy from this device.", "info");
       }
+      startSaveIndicatorTicker();
     }
   }
 
