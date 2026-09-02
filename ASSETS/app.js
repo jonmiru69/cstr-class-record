@@ -423,7 +423,33 @@
   }
 
   function currentSection() { return state.registry.find((section) => section.id === activeSectionId) || state.registry[0]; }
-  function currentPeriod() { return state.sections[activeSectionId].periods[activePeriodIndex]; }
+
+  // Resolves through currentSection()'s own fallback rather than indexing
+  // state.sections[activeSectionId] directly, and never throws. Whenever the
+  // whole `state` object gets swapped out (loading from GitHub, restoring a
+  // version, restoring a local draft) activeSectionId can briefly point at a
+  // section that no longer exists in the new data — this must degrade to
+  // "no current period" instead of crashing every render() in between.
+  function currentPeriod() {
+    const section = currentSection();
+    const bucket = section && state.sections[section.id];
+    return bucket && Array.isArray(bucket.periods) ? bucket.periods[activePeriodIndex] : undefined;
+  }
+
+  // Call right after anything replaces `state` wholesale (data load, version
+  // restore, local draft restore). If activeSectionId no longer matches a
+  // section in the new registry, snap it back to a real section (or clear it
+  // if there are none) and back out of the "record" view for that vanished
+  // section instead of leaving the app pointed at data that doesn't exist.
+  function ensureActiveSelectionValid() {
+    const stillExists = state.registry.some((section) => section.id === activeSectionId);
+    if (stillExists) return;
+    const fallback = state.registry[0];
+    activeSectionId = fallback ? fallback.id : "";
+    activeGroup = fallback ? fallback.group : activeGroup;
+    activePeriodIndex = 0;
+    if (currentView === "record") currentView = state.registry.length ? "chooser" : "home";
+  }
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
   function safeValue(value) { return escapeHtml(value === undefined || value === null ? "" : value); }
   function button(label, action, className = "button", extra = "") { return `<button type="button" class="${className}" data-action="${action}" ${extra}>${label}</button>`; }
@@ -564,6 +590,7 @@
   }
 
   function render() {
+    ensureActiveSelectionValid();
     const scrollLeft = currentView === "record" ? rememberTableScroll() : null;
     app.innerHTML = sessionStorage.getItem("cstr-class-record-login") === "true" ? renderApp() : renderLogin();
     if (sessionStorage.getItem("cstr-class-record-login") === "true") {
@@ -1558,14 +1585,28 @@
       establishCleanBaseline();
       lastSavedAt = new Date();
       startSaveIndicatorTicker();
-      render();
-      setStatus("Saved data loaded successfully ✓");
+      // The fetch/parse succeeded and `state` is already updated at this point —
+      // the data IS loaded. Drawing the screen is a separate concern, so a
+      // rendering hiccup here must never be reported as a load failure, must
+      // never re-lock saving (isDataLoaded stays true), and must never throw
+      // uncaught out of this async function.
+      try {
+        render();
+        setStatus("Saved data loaded successfully ✓");
+      } catch (renderError) {
+        console.error("Render after successful load failed:", renderError);
+        setStatus("Data loaded, but the screen didn't refresh. Try switching views (Home / Class Record).", "error");
+      }
     } catch (error) { 
       if (requestId !== loadRequestId) return; // a newer load has since started; let it decide the outcome
       isLoading = false;
       isDataLoaded = false;
       lastLoadError = error.message;
-      render();
+      try {
+        render();
+      } catch (renderError) {
+        console.error("Render after failed load also failed:", renderError);
+      }
       setStatus(`Load Error: ${error.message}`, "error"); 
     }
   }
